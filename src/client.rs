@@ -110,13 +110,17 @@ async fn main() -> Result<(), ErrorBox> {
             if let Ok(n) = rd.read(&mut buf).await {
                 match PacketType::from_str(from_utf8(&buf[..n]).unwrap()) {
                     Some(PacketType::JoinResult(r)) if r.result => Ok(id),
-                    _ => Err(()),
+                    Some(PacketType::JoinResult(r)) => Err(r.msg),
+                    _ => Err(format!(
+                        "Invalid packet: {}",
+                        String::from_utf8(buf.to_vec()).unwrap()
+                    )),
                 }
             } else {
-                Err(())
+                Err(format!("Failed to read from stream"))
             }
         }
-        Err(_) => Err(()),
+        Err(_) => Err(format!("Failed to read ID from stdin")),
     };
 
     let id = match join_res {
@@ -127,7 +131,8 @@ async fn main() -> Result<(), ErrorBox> {
                 .await;
             s
         }
-        Err(_) => {
+        Err(e) => {
+            eprintln!("err: {}", e);
             return Err(Box::new(ClientErr::JoinErr) as ErrorBox);
         }
     };

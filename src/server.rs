@@ -9,8 +9,13 @@ use packet::packet::*;
 mod session;
 use session::*;
 
-fn is_valid_join_request(s: &Session, join: &Join) -> bool {
-    s.num_user < session::NUM_MAX_USER && !s.names.contains(&join.id)
+fn is_valid_join_request(s: &Session, join: &Join) -> Result<(), String> {
+    if s.num_user >= session::NUM_MAX_USER {
+        return Err(String::from("Server is full"));
+    } else if s.names.contains(&join.id) {
+        return Err(String::from("ID already exists in the session"));
+    }
+    Ok(())
 }
 
 async fn channel_handler(
@@ -98,7 +103,7 @@ async fn client_handler(
                     let acceptable = is_valid_join_request(&s, &join);
 
                     // add new user to Session
-                    if acceptable {
+                    if acceptable.is_ok() {
                         s.names.insert(join.id.clone());
                         s.num_user += 1;
 
@@ -107,7 +112,10 @@ async fn client_handler(
                             lock.push_str(join.id.as_str());
                         }
                     }
-                    JoinResult { result: acceptable }
+                    JoinResult {
+                        result: acceptable.is_ok(),
+                        msg: acceptable.err().unwrap_or(String::from("success")),
+                    }
                 };
                 // notify client that it's ok to join
                 _ = packet_tx.send(PacketType::JoinResult(join_res)).await;

@@ -61,12 +61,14 @@ impl IntoPacket for Join {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct JoinResult {
     pub result: bool,
+    pub msg: String,
 }
 
 impl IntoPacket for JoinResult {
     fn as_json(&self) -> Value {
         json!({
             "result": self.result,
+            "msg": self.msg,
             "type": "join_result",
         })
     }
@@ -74,6 +76,7 @@ impl IntoPacket for JoinResult {
     fn into_json(self) -> Value {
         json!({
             "result": self.result,
+            "msg": self.msg,
             "type": "join_result",
         })
     }
@@ -142,7 +145,11 @@ impl PacketType {
                 }
                 Some("join_result") => {
                     let result = map.get("result").unwrap().as_bool().unwrap();
-                    Some(PacketType::JoinResult(JoinResult { result }))
+                    let msg = map.get("msg").unwrap().as_str().unwrap();
+                    Some(PacketType::JoinResult(JoinResult {
+                        result,
+                        msg: String::from(msg),
+                    }))
                 }
                 Some("exit") => Some(PacketType::Exit(Exit {})),
                 Some("connected") => Some(PacketType::Connected(Connected {})),
