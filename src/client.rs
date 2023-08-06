@@ -93,8 +93,9 @@ async fn message_sender(mut wr: WriteHalf<TcpStream>, id: String) {
 
 #[tokio::main]
 async fn main() -> Result<(), ErrorBox> {
-    // TODO: TUI layout
-    println!("\n\t----------- [RsSimpleChat] -----------\n");
+    println!("|----------------------------------------------|");
+    println!("|--------------- [RsSimpleChat] ---------------|");
+    println!("|----------------------------------------------|");
     let stream = TcpStream::connect("0.0.0.0:8080").await?;
     let (mut rd, mut wr) = tokio::io::split(stream);
 
@@ -113,7 +114,7 @@ async fn main() -> Result<(), ErrorBox> {
                     Some(PacketType::JoinResult(r)) => Err(r.msg),
                     _ => Err(format!(
                         "Invalid packet: {}",
-                        String::from_utf8(buf.to_vec()).unwrap()
+                        String::from_utf8(buf.to_vec())?
                     )),
                 }
             } else {
@@ -136,7 +137,7 @@ async fn main() -> Result<(), ErrorBox> {
             return Err(Box::new(ClientErr::JoinErr) as ErrorBox);
         }
     };
-    println!("\n  >> Hello '{}', Welcome to RsChat\n", id);
+    println!("[#System] Hello '{}', Welcome to RsChat", id);
 
     // Interface for receiving broadcast messages from the server and print them
     tokio::task::spawn(message_receiver(rd));
