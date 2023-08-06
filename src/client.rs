@@ -62,6 +62,7 @@ async fn message_sender(mut wr: WriteHalf<TcpStream>, id: String) {
         }
 
         if msg.starts_with('/') {
+            // message that starts with '/' is recognized as a command
             match Command::from_str(&msg) {
                 Some(Command::Help) => {
                     Command::help();
@@ -76,19 +77,17 @@ async fn message_sender(mut wr: WriteHalf<TcpStream>, id: String) {
                 // Not a command
                 None => (),
             }
-            // Command will not be sent to the server
-            continue;
-        }
+        } else {
+            let msg_json_bytes = Message {
+                id: id.clone(),
+                msg: msg.clone(),
+                is_system: false,
+            }
+            .as_json_bytes();
 
-        let msg_json_bytes = Message {
-            id: id.clone(),
-            msg: msg.clone(),
-            is_system: false,
+            // send message to server
+            _ = wr.write_all(&msg_json_bytes).await;
         }
-        .as_json_bytes();
-
-        // send message to server
-        _ = wr.write_all(&msg_json_bytes).await;
     }
 }
 
