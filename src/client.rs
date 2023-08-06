@@ -4,11 +4,13 @@ use std::str::from_utf8;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 
-mod error;
+use command::command::*;
 use error::*;
-
-mod packet;
 use packet::packet::*;
+
+mod command;
+mod error;
+mod packet;
 
 type ErrorBox = Box<dyn std::error::Error>;
 
@@ -47,8 +49,9 @@ async fn message_receiver(mut rd: ReadHalf<TcpStream>) {
 }
 
 async fn message_sender(mut wr: WriteHalf<TcpStream>, id: String) {
-    let mut msg = String::new();
     loop {
+        let mut msg = String::new();
+
         print!("type >> ");
         io::stdout().flush().unwrap();
         let _ = io::stdin().read_line(&mut msg);
@@ -58,12 +61,23 @@ async fn message_sender(mut wr: WriteHalf<TcpStream>, id: String) {
             continue;
         }
 
-        if msg.contains("/exit") {
-            println!(" >> See you soon <<");
-            _ = wr
-                .write_all(Exit {}.into_json().to_string().as_bytes())
-                .await;
-            break;
+        if msg.starts_with('/') {
+            match Command::from_str(&msg) {
+                Some(Command::Help) => {
+                    Command::help();
+                }
+                Some(Command::Exit) => {
+                    println!(" >> See you soon <<");
+                    _ = wr
+                        .write_all(Exit {}.into_json().to_string().as_bytes())
+                        .await;
+                    break;
+                }
+                // Not a command
+                None => (),
+            }
+            // Command will not be sent to the server
+            continue;
         }
 
         let msg_json_bytes = Message {
@@ -75,7 +89,6 @@ async fn message_sender(mut wr: WriteHalf<TcpStream>, id: String) {
 
         // send message to server
         _ = wr.write_all(&msg_json_bytes).await;
-        msg.clear();
     }
 }
 
