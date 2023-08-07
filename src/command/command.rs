@@ -1,23 +1,34 @@
 pub enum Command {
     Help,
+    Get(String),
     Exit,
 }
 
 impl Command {
     pub fn from_str(s: &str) -> Option<Command> {
-        if !s.starts_with('/') {
+        let cmdline = s.trim_end();
+        if !cmdline.starts_with('/') {
             return None;
         }
 
-        let command = if let Some(idx) = s.find(' ') {
-            &s[1..idx]
+        let command = if let Some(idx) = cmdline.find(' ') {
+            &cmdline[1..idx]
         } else {
-            &s[1..]
+            &cmdline[1..]
         };
 
         match command {
             "exit" => Some(Command::Exit),
             "help" => Some(Command::Help),
+            "get" => {
+                if let Some(idx) = cmdline.find(' ') {
+                    let item = String::from(cmdline[idx + 1..].trim());
+                    Some(Command::Get(item))
+                } else {
+                    println!("[#SystemError] Command 'get' requires argument: 'get <key>'");
+                    None
+                }
+            }
             cmd => {
                 println!("Unknown command: '{}'", cmd);
                 None

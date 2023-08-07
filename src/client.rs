@@ -74,6 +74,14 @@ async fn message_sender(mut wr: WriteHalf<TcpStream>, id: String) {
                         .await;
                     break;
                 }
+                Some(Command::Get(item)) => match &item[..] {
+                    "info" | "name" => {
+                        println!("[#cmd:get] Your ID: '{}'", id);
+                    }
+                    _ => {
+                        println!("[#SystemError] Unknown item: '{}'", item);
+                    }
+                },
                 // Not a command
                 None => (),
             }
