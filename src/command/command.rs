@@ -9,8 +9,8 @@ impl Command {
             return None;
         }
 
-        let command = if let Some(cmd) = s.find(' ') {
-            &s[1..cmd]
+        let command = if let Some(idx) = s.find(' ') {
+            &s[1..idx]
         } else {
             &s[1..]
         };

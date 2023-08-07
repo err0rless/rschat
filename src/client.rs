@@ -96,6 +96,7 @@ async fn main() -> Result<(), ErrorBox> {
     println!("|----------------------------------------------|");
     println!("|--------------- [RsSimpleChat] ---------------|");
     println!("|----------------------------------------------|");
+
     let stream = TcpStream::connect("0.0.0.0:8080").await?;
     let (mut rd, mut wr) = tokio::io::split(stream);
 

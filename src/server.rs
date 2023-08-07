@@ -7,13 +7,12 @@ mod packet;
 use packet::packet::*;
 
 mod session;
-use session::*;
 
-fn is_valid_join_request(s: &Session, join: &Join) -> Result<(), String> {
-    if s.num_user >= session::NUM_MAX_USER {
+fn check_join_request(state: &session::State, join: &Join) -> Result<(), String> {
+    if state.num_user >= session::NUM_MAX_USER {
         return Err(String::from("Server is full"));
-    } else if s.names.contains(&join.id) {
-        return Err(String::from("ID already exists in the session"));
+    } else if state.names.contains(&join.id) {
+        return Err(String::from("Duplicate ID"));
     }
     Ok(())
 }
@@ -63,7 +62,7 @@ async fn channel_handler(
 async fn client_handler(
     stream: TcpStream,
     msg_tx: broadcast::Sender<PacketType>,
-    sess: Arc<Mutex<Session>>,
+    state: Arc<Mutex<session::State>>,
 ) {
     let (mut rd, wr) = tokio::io::split(stream);
 
@@ -98,9 +97,9 @@ async fn client_handler(
             // Received request to join from the client, check to see if the client is good to join
             // and write result back to the client
             Some(PacketType::Join(join)) => {
-                let join_res = {
-                    let mut s = sess.lock().unwrap();
-                    let acceptable = is_valid_join_request(&s, &join);
+                let join_res: JoinResult = {
+                    let mut s = state.lock().unwrap();
+                    let acceptable = check_join_request(&s, &join);
 
                     // add new user to Session
                     if acceptable.is_ok() {
@@ -142,7 +141,7 @@ async fn client_handler(
             }
             // Received exit notification from client, remove the client from current session
             Some(PacketType::Exit(_)) => {
-                let mut s = sess.lock().unwrap();
+                let mut s = state.lock().unwrap();
                 s.num_user -= 1;
 
                 if let Ok(lock) = id.lock() {
@@ -175,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (msg_tx, _) = broadcast::channel::<PacketType>(32);
 
     // Session state
-    let sess = Arc::new(Mutex::new(Session {
+    let state = Arc::new(Mutex::new(session::State {
         names: std::collections::HashSet::new(),
         num_user: 0,
     }));
@@ -189,6 +188,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(_) => continue,
         };
-        tokio::spawn(client_handler(socket, msg_tx.clone(), sess.clone()));
+        tokio::spawn(client_handler(socket, msg_tx.clone(), state.clone()));
     }
 }
