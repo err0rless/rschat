@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
@@ -23,7 +24,7 @@ async fn channel_handler(
     mut wr: WriteHalf<TcpStream>,
     id_for_channel: Arc<Mutex<String>>,
 ) {
-    let mut connected = false;
+    let connected = AtomicBool::new(false);
     loop {
         tokio::select! {
             // Handling the message channel
@@ -31,7 +32,7 @@ async fn channel_handler(
                 match packet_type {
                     PacketType::Message(msg) => {
                         // Client hasn't connected successfully yet
-                        if !connected { continue; }
+                        if !connected.load(Ordering::Relaxed) { continue; }
 
                         // Skip message from the current client handler
                         if let Ok(lock) = id_for_channel.lock() {
@@ -46,7 +47,7 @@ async fn channel_handler(
                         }
                     },
                     PacketType::Connected(_) => {
-                        connected = true;
+                        connected.store(true, Ordering::Relaxed);
                     }
                     _ => (),
                 }
