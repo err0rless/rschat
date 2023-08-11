@@ -8,8 +8,13 @@ pub trait IntoPacket {
     fn as_json_bytes(&self) -> Vec<u8> {
         self.as_json().to_string().as_bytes().to_vec()
     }
+
+    fn as_json_string(&self) -> String {
+        self.as_json().to_string()
+    }
 }
 
+// Client -> Server -> Other clients
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
     pub id: String,
@@ -37,6 +42,7 @@ impl IntoPacket for Message {
     }
 }
 
+// Client -> Server
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Join {
     pub id: String,
@@ -58,8 +64,10 @@ impl IntoPacket for Join {
     }
 }
 
+// Client <- Server
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct JoinResult {
+    pub id: String,
     pub result: bool,
     pub msg: String,
 }
@@ -67,6 +75,7 @@ pub struct JoinResult {
 impl IntoPacket for JoinResult {
     fn as_json(&self) -> Value {
         json!({
+            "id": self.id,
             "result": self.result,
             "msg": self.msg,
             "type": "join_result",
@@ -75,6 +84,7 @@ impl IntoPacket for JoinResult {
 
     fn into_json(self) -> Value {
         json!({
+            "id": self.id,
             "result": self.result,
             "msg": self.msg,
             "type": "join_result",
@@ -82,6 +92,7 @@ impl IntoPacket for JoinResult {
     }
 }
 
+// Client -> Server
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Connected {}
 
@@ -95,6 +106,7 @@ impl IntoPacket for Connected {
     }
 }
 
+// Client -> Server
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Exit {}
 
@@ -124,7 +136,11 @@ impl PacketType {
             Err(_) => return None,
         };
 
-        let map = json_value.as_object().unwrap();
+        let map = match json_value.as_object() {
+            Some(m) => m,
+            None => return None,
+        };
+
         if let Some(packet_type) = map.get("type") {
             match packet_type.as_str() {
                 Some("join") => {
@@ -144,9 +160,11 @@ impl PacketType {
                     }))
                 }
                 Some("join_result") => {
+                    let id = map.get("id").unwrap().as_str().unwrap();
                     let result = map.get("result").unwrap().as_bool().unwrap();
                     let msg = map.get("msg").unwrap().as_str().unwrap();
                     Some(PacketType::JoinResult(JoinResult {
+                        id: String::from(id),
                         result,
                         msg: String::from(msg),
                     }))

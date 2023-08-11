@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 
 mod packet;
 use packet::packet::*;
@@ -14,48 +14,50 @@ fn check_join_request(state: &session::State, join: &Join) -> Result<(), String>
         return Err(String::from("Server is full"));
     } else if state.names.contains(&join.id) {
         return Err(String::from("Duplicate ID"));
+    } else if join.id.len() < 4 || join.id.len() > 12 {
+        return Err(String::from("Length of ID should be: 3 < ID < 13"));
     }
     Ok(())
 }
 
-async fn channel_handler(
+async fn broadcast_channel_handler(
     mut msg_rx: broadcast::Receiver<PacketType>,
-    mut packet_rx: mpsc::Receiver<PacketType>,
     mut wr: WriteHalf<TcpStream>,
     id_for_channel: Arc<Mutex<String>>,
 ) {
     let connected = AtomicBool::new(false);
     loop {
-        tokio::select! {
-            // Handling the message channel
-            Ok(packet_type) = msg_rx.recv() => {
-                match packet_type {
-                    PacketType::Message(msg) => {
-                        // Client hasn't connected successfully yet
-                        if !connected.load(Ordering::Relaxed) { continue; }
-
-                        // Skip message from the current client handler
-                        if let Ok(lock) = id_for_channel.lock() {
-                            if lock.as_str() == msg.id {
-                                continue
-                            }
-                        }
-
-                        // Write message to the stream
-                        if let Ok(msg_json) = serde_json::to_value(msg) {
-                            _ = wr.write_all(msg_json.to_string().as_bytes()).await;
-                        }
-                    },
-                    PacketType::Connected(_) => {
-                        connected.store(true, Ordering::Relaxed);
-                    }
-                    _ => (),
+        match msg_rx.recv().await {
+            Ok(PacketType::Message(msg)) => {
+                // Client hasn't connected successfully yet
+                if !connected.load(Ordering::Relaxed) {
+                    continue;
                 }
-            },
-            // Handling the packet channel that takes any type of packet
-            Some(PacketType::JoinResult(res)) = packet_rx.recv() => {
+
+                // Skip message from the current client handler
+                if let Ok(lock) = id_for_channel.lock() {
+                    if lock.as_str() == msg.id {
+                        continue;
+                    }
+                }
+
+                // Write message to the stream
+                if let Ok(msg_json) = serde_json::to_value(msg) {
+                    _ = wr.write_all(msg_json.to_string().as_bytes()).await;
+                }
+            }
+            Ok(PacketType::Connected(_)) => {
+                connected.store(true, Ordering::Relaxed);
+            }
+            Ok(PacketType::JoinResult(res)) => {
+                if let Ok(lock) = id_for_channel.lock() {
+                    if lock.as_str() != res.id {
+                        continue;
+                    }
+                }
                 _ = wr.write_all(&res.as_json_bytes()).await;
             }
+            _ => continue,
         }
     }
 }
@@ -67,19 +69,14 @@ async fn client_handler(
 ) {
     let (mut rd, wr) = tokio::io::split(stream);
 
-    // New packet channel only for current client handler
-    let (packet_tx, packet_rx) = mpsc::channel::<PacketType>(8);
-
     // Identifier container
     let id = Arc::new(Mutex::new(String::new()));
 
     // Subscribe the broadcast channel
     let msg_rx = msg_tx.subscribe();
 
-    // Channels handler
-    //  - msg_rx: Message channel (broadcast, every client handler should have this)
-    //  - packet_rx: Packet channel (mspc, only for current client handler
-    tokio::task::spawn(channel_handler(msg_rx, packet_rx, wr, id.clone()));
+    // broadcast channel handler
+    tokio::task::spawn(broadcast_channel_handler(msg_rx, wr, id.clone()));
 
     let mut buf = [0; 1024];
     loop {
@@ -93,10 +90,14 @@ async fn client_handler(
             }
         };
 
-        let msg_str = std::str::from_utf8(&buf[0..n]).unwrap();
+        let msg_str = if let Ok(s) = std::str::from_utf8(&buf[0..n]) {
+            s
+        } else {
+            continue;
+        };
         match PacketType::from_str(msg_str) {
-            // Received request to join from the client, check to see if the client is good to join
-            // and write result back to the client
+            // Received request to join, check to see if the client is good to join and send
+            // result back
             Some(PacketType::Join(join)) => {
                 let join_res: JoinResult = {
                     let mut s = state.lock().unwrap();
@@ -113,12 +114,13 @@ async fn client_handler(
                         }
                     }
                     JoinResult {
+                        id: join.id,
                         result: acceptable.is_ok(),
                         msg: acceptable.err().unwrap_or(String::from("success")),
                     }
                 };
                 // notify client that it's ok to join
-                _ = packet_tx.send(PacketType::JoinResult(join_res)).await;
+                _ = msg_tx.send(PacketType::JoinResult(join_res));
             }
             // Received request to broadcast message from client
             Some(PacketType::Message(msg)) => {
@@ -134,7 +136,7 @@ async fn client_handler(
                     // notify other clients that new client has joined
                     let con_notification = Message {
                         id: lock.clone(),
-                        msg: format!("@{} has joined the server", lock),
+                        msg: format!("@{} has joined", lock),
                         is_system: true,
                     };
                     _ = msg_tx.send(PacketType::Message(con_notification));
@@ -181,14 +183,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }));
 
     println!("[RsChat Sever] Listening on port 8080...");
-    loop {
-        let socket = match listener.accept().await {
-            Ok(s) => {
-                println!("[#System] new connection from {:?}", s.0);
-                s.0
-            }
-            Err(_) => continue,
-        };
-        tokio::spawn(client_handler(socket, msg_tx.clone(), state.clone()));
+    while let Ok(s) = listener.accept().await {
+        println!("New connection from: {:?}", s.0);
+        tokio::spawn(client_handler(s.0, msg_tx.clone(), state.clone()));
     }
+    Ok(())
 }

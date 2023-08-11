@@ -39,6 +39,7 @@ impl Command {
     pub fn help() {
         println!(" | ----- Help -----");
         println!(" | /help: help message");
+        println!(" | /get <key>: get information");
         println!(" | /exit: exit from chat");
     }
 }
