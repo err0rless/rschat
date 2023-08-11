@@ -23,11 +23,19 @@ fn check_join_request(state: &session::State, join: &Join) -> Result<(), String>
 async fn broadcast_channel_handler(
     mut msg_rx: broadcast::Receiver<PacketType>,
     mut wr: WriteHalf<TcpStream>,
-    id_for_channel: Arc<Mutex<String>>,
+    id: Arc<Mutex<String>>,
 ) {
     let connected = AtomicBool::new(false);
     loop {
         match msg_rx.recv().await {
+            Ok(PacketType::JoinResult(res)) => {
+                if let Ok(lock) = id.lock() {
+                    if lock.as_str() != res.id {
+                        continue;
+                    }
+                }
+                _ = wr.write_all(&res.as_json_bytes()).await;
+            }
             Ok(PacketType::Message(msg)) => {
                 // Client hasn't connected successfully yet
                 if !connected.load(Ordering::Relaxed) {
@@ -35,7 +43,7 @@ async fn broadcast_channel_handler(
                 }
 
                 // Skip message from the current client handler
-                if let Ok(lock) = id_for_channel.lock() {
+                if let Ok(lock) = id.lock() {
                     if lock.as_str() == msg.id {
                         continue;
                     }
@@ -48,14 +56,6 @@ async fn broadcast_channel_handler(
             }
             Ok(PacketType::Connected(_)) => {
                 connected.store(true, Ordering::Relaxed);
-            }
-            Ok(PacketType::JoinResult(res)) => {
-                if let Ok(lock) = id_for_channel.lock() {
-                    if lock.as_str() != res.id {
-                        continue;
-                    }
-                }
-                _ = wr.write_all(&res.as_json_bytes()).await;
             }
             _ => continue,
         }
@@ -105,14 +105,18 @@ async fn client_handler(
 
                     // add new user to Session
                     if acceptable.is_ok() {
+                        match id.lock() {
+                            // Set id for current client handler
+                            Ok(mut lock) if lock.is_empty() => lock.push_str(join.id.as_str()),
+                            // 1. mutex lock failed
+                            // 2. client is trying to join more than once
+                            _ => continue,
+                        }
+
                         s.names.insert(join.id.clone());
                         s.num_user += 1;
-
-                        // Set id for current client handler
-                        if let Ok(mut lock) = id.lock() {
-                            lock.push_str(join.id.as_str());
-                        }
                     }
+
                     JoinResult {
                         id: join.id,
                         result: acceptable.is_ok(),
@@ -120,27 +124,25 @@ async fn client_handler(
                     }
                 };
                 // notify client that it's ok to join
-                _ = msg_tx.send(PacketType::JoinResult(join_res));
+                _ = msg_tx.send(PacketType::JoinResult(join_res.clone()));
+
+                match id.lock() {
+                    // Join request has been aceepted
+                    Ok(lock) if join_res.result => {
+                        _ = msg_tx.send(PacketType::Connected(Connected {}));
+                        _ = msg_tx.send(PacketType::Message(Message {
+                            id: lock.clone(),
+                            msg: format!("@{} has joined", lock),
+                            is_system: true,
+                        }));
+                    }
+                    _ => (),
+                }
             }
-            // Received request to broadcast message from client
+            // Received request to broadcast message
             Some(PacketType::Message(msg)) => {
                 // Send message to the channel for broadcasting to connected clients
                 _ = msg_tx.send(PacketType::Message(msg));
-            }
-            // Received notification that the client was successfully connected to the server
-            // Now this client can receive the messages from other clients
-            Some(PacketType::Connected(con)) => {
-                _ = msg_tx.send(PacketType::Connected(con));
-
-                if let Ok(lock) = id.lock() {
-                    // notify other clients that new client has joined
-                    let con_notification = Message {
-                        id: lock.clone(),
-                        msg: format!("@{} has joined", lock),
-                        is_system: true,
-                    };
-                    _ = msg_tx.send(PacketType::Message(con_notification));
-                }
             }
             // Received exit notification from client, remove the client from current session
             Some(PacketType::Exit(_)) => {

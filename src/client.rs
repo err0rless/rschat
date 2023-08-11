@@ -154,11 +154,6 @@ async fn communication_main() -> Result<(), Box<dyn std::error::Error>> {
     let id = match join_res {
         Ok(s) => {
             println!("[#System] Hello '{}', Welcome to RsChat", s);
-
-            // Succeeded to connect to server
-            _ = wr
-                .write_all(Connected {}.into_json().to_string().as_bytes())
-                .await;
             s
         }
         Err(e) => {
