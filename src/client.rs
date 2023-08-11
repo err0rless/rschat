@@ -1,8 +1,9 @@
-use std::io::{self, Write};
+use std::io::Write;
 use std::str::from_utf8;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
+use tokio::sync::mpsc;
 
 use command::command::*;
 use error::*;
@@ -14,18 +15,26 @@ mod packet;
 
 type ErrorBox = Box<dyn std::error::Error>;
 
-fn read_id() -> Result<String, ErrorBox> {
-    print!(">> Enter your ID: ");
-    io::stdout().flush().unwrap();
+async fn async_read_line() -> String {
+    _ = tokio::io::stdout().write_all(b"you >> ").await;
+    _ = tokio::io::stdout().flush().await;
 
-    let mut id = String::new();
-    io::stdin().read_line(&mut id)?;
-    id.pop();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
 
-    Ok(id)
+    _ = reader.read_until(b'\n', &mut buf).await;
+    buf.pop();
+
+    String::from_utf8(buf).unwrap()
 }
 
-async fn message_receiver(mut rd: ReadHalf<TcpStream>) {
+async fn read_id() -> Result<String, ErrorBox> {
+    print!(">> Enter Your ID: ");
+    std::io::stdout().flush().unwrap();
+    Ok(async_read_line().await)
+}
+
+async fn recv_message(mut rd: ReadHalf<TcpStream>) {
     let mut buf = [0; 1024];
     loop {
         let n = match rd.read(&mut buf).await {
@@ -48,15 +57,27 @@ async fn message_receiver(mut rd: ReadHalf<TcpStream>) {
     }
 }
 
-async fn message_sender(mut wr: WriteHalf<TcpStream>, id: String) {
+async fn consume_outgoings(
+    mut write_stream: WriteHalf<TcpStream>,
+    mut outgoing_rx: mpsc::Receiver<String>,
+) {
+    while let Some(msg) = outgoing_rx.recv().await {
+        _ = write_stream.write_all(msg.as_bytes()).await;
+    }
+}
+
+async fn message_sender(outgoing_tx: mpsc::Sender<String>, id: String) {
     loop {
-        let mut msg = String::new();
+        print!("you >> ");
+        std::io::stdout().flush().unwrap();
 
-        print!("type >> ");
-        io::stdout().flush().unwrap();
-        let _ = io::stdin().read_line(&mut msg);
-        msg.pop();
+        let mut buf: Vec<u8> = Vec::new();
+        let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
 
+        _ = reader.read_until(b'\n', &mut buf).await;
+        buf.pop();
+
+        let msg = String::from_utf8(buf).unwrap();
         if msg.is_empty() {
             continue;
         }
@@ -69,9 +90,7 @@ async fn message_sender(mut wr: WriteHalf<TcpStream>, id: String) {
                 }
                 Some(Command::Exit) => {
                     println!(" >> See you soon <<");
-                    _ = wr
-                        .write_all(Exit {}.into_json().to_string().as_bytes())
-                        .await;
+                    _ = outgoing_tx.send(Exit {}.as_json_string()).await;
                     break;
                 }
                 Some(Command::Get(item)) => match &item[..] {
@@ -91,16 +110,17 @@ async fn message_sender(mut wr: WriteHalf<TcpStream>, id: String) {
                 msg: msg.clone(),
                 is_system: false,
             }
-            .as_json_bytes();
+            .as_json_string();
 
             // send message to server
-            _ = wr.write_all(&msg_json_bytes).await;
+            if let Err(e) = outgoing_tx.send(msg_json_bytes).await {
+                println!("Channel send failed: {}", e);
+            }
         }
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), ErrorBox> {
+async fn communication_main() -> Result<(), Box<dyn std::error::Error>> {
     println!("|----------------------------------------------|");
     println!("|--------------- [RsSimpleChat] ---------------|");
     println!("|----------------------------------------------|");
@@ -109,38 +129,32 @@ async fn main() -> Result<(), ErrorBox> {
     let (mut rd, mut wr) = tokio::io::split(stream);
 
     // read id from stdin and request to join
-    let join_res = match read_id() {
+    let join_res: Result<String, String> = match read_id().await {
         Ok(id) => {
             // send Join request
-            let join_req = Join { id: id.clone() }.into_json();
-            let _ = wr.write_all(join_req.to_string().as_bytes()).await;
+            let _ = wr.write_all(&Join { id: id.clone() }.as_json_bytes()).await;
 
             // await JoinResult response
-            let mut buf = [0; 1024];
-            let ret: Result<String, String>;
+            let mut buf = vec![0; 1024];
             loop {
                 if let Ok(n) = rd.read(&mut buf).await {
                     match PacketType::from_str(from_utf8(&buf[..n]).unwrap()) {
-                        Some(PacketType::JoinResult(r)) if r.result => {
-                            ret = Ok(id);
-                            break;
-                        }
                         Some(PacketType::JoinResult(r)) => {
-                            ret = Err(r.msg);
-                            break;
+                            break if r.result { Ok(id) } else { Err(r.msg) }
                         }
                         // Different type of packet received
                         _ => continue,
                     }
                 }
             }
-            ret
         }
         Err(_) => Err(format!("Failed to read ID from stdin")),
     };
 
     let id = match join_res {
         Ok(s) => {
+            println!("[#System] Hello '{}', Welcome to RsChat", s);
+
             // Succeeded to connect to server
             _ = wr
                 .write_all(Connected {}.into_json().to_string().as_bytes())
@@ -148,16 +162,26 @@ async fn main() -> Result<(), ErrorBox> {
             s
         }
         Err(e) => {
-            eprintln!("err: {}", e);
-            return Err(Box::new(ClientErr::JoinErr) as ErrorBox);
+            std::io::stderr().write_all(format!("Join Failed: {}", e).as_bytes())?;
+            return Err(Box::new(ClientErr::JoinErr));
         }
     };
-    println!("[#System] Hello '{}', Welcome to RsChat", id);
 
-    // Interface for receiving broadcast messages from the server and print them
-    tokio::task::spawn(message_receiver(rd));
+    // Channel for messages that are being sent
+    let (outgoing_tx, outgoing_rx) = mpsc::channel::<String>(32);
+
+    // Outgoing channel consumer task
+    tokio::task::spawn(consume_outgoings(wr, outgoing_rx));
+
+    // Interface for receiving broadcast messages from server and print them
+    tokio::task::spawn(recv_message(rd));
 
     // Interface for communicating with server
-    tokio::task::spawn(message_sender(wr, id.clone())).await?;
+    tokio::task::spawn(message_sender(outgoing_tx.clone(), id.clone())).await?;
     Ok(())
+}
+
+#[tokio::main]
+async fn main() {
+    _ = communication_main().await;
 }
