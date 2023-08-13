@@ -30,7 +30,7 @@ async fn read_id() -> Result<String, ErrorBox> {
     Ok(async_read_line().await)
 }
 
-async fn recv_message(mut rd: ReadHalf<TcpStream>) {
+async fn read_tcp_stream(mut rd: ReadHalf<TcpStream>) {
     let mut buf = [0; 1024];
     loop {
         let n = match rd.read(&mut buf).await {
@@ -62,7 +62,7 @@ async fn consume_outgoings(
     }
 }
 
-async fn message_sender(outgoing_tx: mpsc::Sender<String>, id: String) {
+async fn produce_message(outgoing_tx: mpsc::Sender<String>, id: String) {
     loop {
         print!("you >> ");
         std::io::stdout().flush().unwrap();
@@ -116,7 +116,7 @@ async fn message_sender(outgoing_tx: mpsc::Sender<String>, id: String) {
     }
 }
 
-pub async fn client_main(port: String) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_client(port: String) -> Result<(), Box<dyn std::error::Error>> {
     println!("|----------------------------------------------|");
     println!("|--------------- [RsSimpleChat] ---------------|");
     println!("|----------------------------------------------|");
@@ -141,7 +141,6 @@ pub async fn client_main(port: String) -> Result<(), Box<dyn std::error::Error>>
                         Some(PacketType::JoinResult(r)) => {
                             break if r.result { Ok(id) } else { Err(r.msg) }
                         }
-                        // Different type of packet received
                         _ => continue,
                     }
                 }
@@ -164,13 +163,13 @@ pub async fn client_main(port: String) -> Result<(), Box<dyn std::error::Error>>
     // Channel for messages that are being sent
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<String>(32);
 
-    // Outgoing channel consumer task
+    // Task for comsuming the outgoing channel
     tokio::task::spawn(consume_outgoings(wr, outgoing_rx));
 
-    // Interface for receiving broadcast messages from server and print them
-    tokio::task::spawn(recv_message(rd));
+    // Task for receiving broadcast messages from server
+    tokio::task::spawn(read_tcp_stream(rd));
 
-    // Interface for communicating with server
-    tokio::task::spawn(message_sender(outgoing_tx.clone(), id.clone())).await?;
+    // Task for communicating with server
+    tokio::task::spawn(produce_message(outgoing_tx.clone(), id.clone())).await?;
     Ok(())
 }

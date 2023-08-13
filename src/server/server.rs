@@ -61,14 +61,14 @@ async fn broadcast_channel_handler(
     }
 }
 
-async fn client_handler(
+async fn session_task(
     stream: TcpStream,
     msg_tx: broadcast::Sender<PacketType>,
     state: Arc<Mutex<session::State>>,
 ) {
     let (mut rd, wr) = tokio::io::split(stream);
 
-    // Identifier container
+    // Thread-safe id container
     let id = Arc::new(Mutex::new(String::new()));
 
     // Subscribe the broadcast channel
@@ -83,9 +83,7 @@ async fn client_handler(
         let n = match rd.read(&mut buf).await {
             Ok(0) => return,
             Ok(n) => n,
-            Err(_) => {
-                return;
-            }
+            Err(_) => return,
         };
 
         let msg_str = if let Ok(s) = std::str::from_utf8(&buf[0..n]) {
@@ -169,13 +167,13 @@ async fn client_handler(
     }
 }
 
-pub async fn server_main(port: String) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_server(port: String) -> Result<(), Box<dyn std::error::Error>> {
     let listener = match TcpListener::bind(format!("0.0.0.0:{}", port)).await {
         Ok(l) => l,
         Err(e) => panic!("{}", e),
     };
 
-    // Channel for broadcasting messages to every connected client
+    // Channel for broadcasting messages to subscribers
     let (msg_tx, _) = broadcast::channel::<PacketType>(32);
 
     // Session state
@@ -187,7 +185,7 @@ pub async fn server_main(port: String) -> Result<(), Box<dyn std::error::Error>>
     println!("[RsChat Sever] Listening on port {}...", port);
     while let Ok(s) = listener.accept().await {
         println!("New connection from: {:?}", s.0);
-        tokio::spawn(client_handler(s.0, msg_tx.clone(), state.clone()));
+        tokio::spawn(session_task(s.0, msg_tx.clone(), state.clone()));
     }
     Ok(())
 }

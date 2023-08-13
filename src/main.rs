@@ -16,8 +16,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // run the target
     match target.as_str() {
-        "client" => client::client::client_main(port).await?,
-        "server" => server::server::server_main(port).await?,
+        "client" => client::client::run_client(port).await?,
+        "server" => server::server::run_server(port).await?,
         t => panic!("Unknown target: '{t}'"),
     }
     Ok(())
