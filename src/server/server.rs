@@ -83,8 +83,7 @@ async fn client_handler(
         let n = match rd.read(&mut buf).await {
             Ok(0) => return,
             Ok(n) => n,
-            Err(e) => {
-                println!("failed to read from socket; err = {:?}", e);
+            Err(_) => {
                 return;
             }
         };
@@ -171,7 +170,10 @@ async fn client_handler(
 }
 
 pub async fn server_main(port: String) -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
+    let listener = match TcpListener::bind(format!("0.0.0.0:{}", port)).await {
+        Ok(l) => l,
+        Err(e) => panic!("{}", e),
+    };
 
     // Channel for broadcasting messages to every connected client
     let (msg_tx, _) = broadcast::channel::<PacketType>(32);

@@ -101,7 +101,7 @@ async fn message_sender(outgoing_tx: mpsc::Sender<String>, id: String) {
                 None => (),
             }
         } else {
-            let msg_json_bytes = Message {
+            let msg_bytes = Message {
                 id: id.clone(),
                 msg: msg.clone(),
                 is_system: false,
@@ -109,7 +109,7 @@ async fn message_sender(outgoing_tx: mpsc::Sender<String>, id: String) {
             .as_json_string();
 
             // send message to server
-            if let Err(e) = outgoing_tx.send(msg_json_bytes).await {
+            if let Err(e) = outgoing_tx.send(msg_bytes).await {
                 println!("Channel send failed: {}", e);
             }
         }
