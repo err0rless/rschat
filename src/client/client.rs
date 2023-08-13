@@ -5,13 +5,9 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHal
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
-use command::command::*;
-use error::*;
-use packet::packet::*;
-
-mod command;
-mod error;
-mod packet;
+use crate::client::command::*;
+use crate::client::error::*;
+use crate::packet::packet::*;
 
 type ErrorBox = Box<dyn std::error::Error>;
 
@@ -120,15 +116,18 @@ async fn message_sender(outgoing_tx: mpsc::Sender<String>, id: String) {
     }
 }
 
-async fn communication_main() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn client_main(port: String) -> Result<(), Box<dyn std::error::Error>> {
     println!("|----------------------------------------------|");
     println!("|--------------- [RsSimpleChat] ---------------|");
     println!("|----------------------------------------------|");
 
-    let stream = TcpStream::connect("0.0.0.0:8080").await?;
-    let (mut rd, mut wr) = tokio::io::split(stream);
+    // Establish a connection and split into two unidirectional streams
+    let (mut rd, mut wr) = match TcpStream::connect(format!("0.0.0.0:{}", port)).await {
+        Ok(s) => tokio::io::split(s),
+        Err(e) => panic!("{}'", e),
+    };
 
-    // read id from stdin and request to join
+    // Try joining with provided ID
     let join_res: Result<String, String> = match read_id().await {
         Ok(id) => {
             // send Join request
@@ -174,9 +173,4 @@ async fn communication_main() -> Result<(), Box<dyn std::error::Error>> {
     // Interface for communicating with server
     tokio::task::spawn(message_sender(outgoing_tx.clone(), id.clone())).await?;
     Ok(())
-}
-
-#[tokio::main]
-async fn main() {
-    _ = communication_main().await;
 }

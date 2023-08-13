@@ -1,13 +1,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 
-mod packet;
-use packet::packet::*;
-
-mod session;
+use crate::packet::packet::*;
+use crate::server::session;
 
 fn check_join_request(state: &session::State, join: &Join) -> Result<(), String> {
     if state.num_user >= session::NUM_MAX_USER {
@@ -171,9 +170,8 @@ async fn client_handler(
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind("0.0.0.0:8080").await?;
+pub async fn server_main(port: String) -> Result<(), Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
     // Channel for broadcasting messages to every connected client
     let (msg_tx, _) = broadcast::channel::<PacketType>(32);
@@ -184,7 +182,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         num_user: 0,
     }));
 
-    println!("[RsChat Sever] Listening on port 8080...");
+    println!("[RsChat Sever] Listening on port {}...", port);
     while let Ok(s) = listener.accept().await {
         println!("New connection from: {:?}", s.0);
         tokio::spawn(client_handler(s.0, msg_tx.clone(), state.clone()));
