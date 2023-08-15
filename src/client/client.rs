@@ -100,7 +100,7 @@ async fn handle_command(
             let login_info = if let Some(u) = db::user::Login::from_stdin(login_id).await {
                 u
             } else {
-                println!("[#System] failed to login");
+                println!("[#System] `id` or `password` is empty");
                 return false;
             };
 
@@ -110,7 +110,8 @@ async fn handle_command(
                 .send(LoginReq { login_info }.as_json_string())
                 .await
             {
-                println!("[login] Channel send failed, retry later: {}", e);
+                println!("[login] Channel send failed, try again: '{}'", e);
+                return false;
             }
 
             // block til Login response
@@ -152,7 +153,7 @@ async fn handle_chat(outgoing_tx: &mpsc::Sender<String>, msg: &String, state: &s
     }
 }
 
-async fn chat_shell(
+async fn chat_interface(
     outgoing_tx: mpsc::Sender<String>,
     incoming_tx: broadcast::Sender<String>,
     mut state: session::State,
@@ -184,7 +185,6 @@ async fn chat_shell(
 }
 
 // Consumes broadcast channel until encounter the packet type: `T`
-// Ignores packets other than `T`
 async fn consume_til<T>(mut incoming_rx: broadcast::Receiver<String>) -> T
 where
     T: serde::de::DeserializeOwned,
@@ -245,6 +245,11 @@ pub async fn run_client(port: String) -> Result<(), Box<dyn std::error::Error>> 
     };
 
     // Shell-like interface for chat client
-    tokio::task::spawn(chat_shell(outgoing_tx.clone(), incoming_tx.clone(), state)).await?;
+    tokio::task::spawn(chat_interface(
+        outgoing_tx.clone(),
+        incoming_tx.clone(),
+        state,
+    ))
+    .await?;
     Ok(())
 }
