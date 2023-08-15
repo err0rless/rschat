@@ -167,10 +167,6 @@ async fn session_task(
                                 lock.num_guest -= 1;
                                 lock.num_user += 1;
                                 lock.names.insert(req.login_info.id.clone());
-
-                                _ = msg_tx.send(PacketType::Message(Message::connection(
-                                    &req.login_info.id.clone(),
-                                )));
                             }
                             res
                         }

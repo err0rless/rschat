@@ -1,4 +1,5 @@
 mod client;
+mod crypto;
 mod db;
 mod packet;
 mod server;

@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncBufReadExt;
 
+use crate::crypto::hash;
+
 fn print_flush(s: &str) {
     print!("{}", s);
     std::io::stdout().flush().unwrap();
@@ -47,7 +49,7 @@ impl User {
         } else {
             Some(Self {
                 id,
-                password,
+                password: hash::sha256_string(&password),
                 bio: if bio.is_empty() { None } else { Some(bio) },
                 location: if loc.is_empty() { None } else { Some(loc) },
             })
@@ -100,7 +102,10 @@ impl Login {
         if id.is_empty() || password.is_empty() {
             None
         } else {
-            Some(Self { id, password })
+            Some(Self {
+                id,
+                password: hash::sha256_string(&password),
+            })
         }
     }
 
