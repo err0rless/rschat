@@ -3,69 +3,84 @@ use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::packet::packet::*;
 use crate::server::session;
 
-fn check_join_request(state: &session::State, join: &Join) -> Result<(), String> {
-    if state.num_user >= session::NUM_MAX_USER {
-        return Err(String::from("Server is full"));
-    } else if state.names.contains(&join.id) {
-        return Err(String::from("Duplicate ID"));
-    } else if join.id.len() < 4 || join.id.len() > 12 {
-        return Err(String::from("Length of ID should be: 3 < ID < 13"));
-    }
-    Ok(())
-}
-
-async fn broadcast_channel_handler(
+async fn channel_consumer(
     mut msg_rx: broadcast::Receiver<PacketType>,
+    mut res_rx: mpsc::Receiver<PacketType>,
     mut wr: WriteHalf<TcpStream>,
     id: Arc<Mutex<String>>,
 ) {
     let connected = AtomicBool::new(false);
     loop {
-        match msg_rx.recv().await {
-            Ok(PacketType::JoinResult(res)) => {
-                if let Ok(lock) = id.lock() {
-                    if lock.as_str() != res.id {
+        tokio::select! {
+            // Handling broadcasting packets
+            //
+            // Packets queued on this channel can be sent to any subscriber
+            msg = msg_rx.recv() => match msg {
+                Ok(PacketType::Message(msg)) => {
+                    // Client hasn't connected successfully yet
+                    if !connected.load(Ordering::Relaxed) {
                         continue;
                     }
-                }
-                _ = wr.write_all(&res.as_json_bytes()).await;
-            }
-            Ok(PacketType::Message(msg)) => {
-                // Client hasn't connected successfully yet
-                if !connected.load(Ordering::Relaxed) {
-                    continue;
-                }
 
-                // Skip message from the current client handler
-                if let Ok(lock) = id.lock() {
-                    if lock.as_str() == msg.id {
-                        continue;
+                    // Skip message from the current client handler
+                    if let Ok(lock) = id.lock() {
+                        if lock.as_str() == msg.id {
+                            continue;
+                        }
+                    }
+
+                    // Write message to the stream
+                    if let Ok(msg_json) = serde_json::to_value(msg) {
+                        _ = wr.write_all(msg_json.to_string().as_bytes()).await;
                     }
                 }
-
-                // Write message to the stream
-                if let Ok(msg_json) = serde_json::to_value(msg) {
-                    _ = wr.write_all(msg_json.to_string().as_bytes()).await;
+                Ok(PacketType::Connected(_)) => {
+                    connected.store(true, Ordering::Relaxed);
                 }
-            }
-            Ok(PacketType::Connected(_)) => {
-                connected.store(true, Ordering::Relaxed);
-            }
-            _ => continue,
+                _ => continue,
+            },
+            // Handling packets that will be sent to current client
+            //
+            // Any one-on-one comminucation between client and server such as request/response should
+            // be sent to this channel
+            res = res_rx.recv() => match res {
+                Some(PacketType::GuestJoinRes(r)) => {
+                    if r.id.is_ok() {
+                        connected.store(true, Ordering::Relaxed);
+                    }
+                    _ = wr.write_all(&r.as_json_bytes()).await;
+                }
+                Some(PacketType::RegisterRes(r)) => {
+                    _ = wr.write_all(&r.as_json_bytes()).await;
+                }
+                Some(PacketType::LoginRes(r)) => {
+                    if let Ok(mut lock) = id.lock() {
+                        // Login succeeded, set current user's ID
+                        if let Ok(login_id) = &r.result {
+                            *lock = login_id.clone();
+                        }
+                    }
+                    _ = wr.write_all(&r.as_json_bytes()).await;
+                }
+                _ => continue,
+            },
         }
     }
 }
 
+// Handler for each connection
 async fn session_task(
     stream: TcpStream,
     msg_tx: broadcast::Sender<PacketType>,
     state: Arc<Mutex<session::State>>,
+    sqlconn: Arc<Mutex<rusqlite::Connection>>,
 ) {
+    // Split into two unidirectional stream
     let (mut rd, wr) = tokio::io::split(stream);
 
     // Thread-safe id container
@@ -74,8 +89,14 @@ async fn session_task(
     // Subscribe the broadcast channel
     let msg_rx = msg_tx.subscribe();
 
-    // broadcast channel handler
-    tokio::task::spawn(broadcast_channel_handler(msg_rx, wr, id.clone()));
+    // Channel for sending response back to client, or any type of packet that needs to be sent
+    // to only current client
+    let (res_tx, res_rx) = mpsc::channel::<PacketType>(32);
+
+    // Channel consumer: consumes the messages from the channels and handle them
+    //  - msg_rx: broadcast channel
+    //  - res_rx: mpsc channel
+    tokio::task::spawn(channel_consumer(msg_rx, res_rx, wr, id.clone()));
 
     let mut buf = [0; 1024];
     loop {
@@ -92,50 +113,49 @@ async fn session_task(
             continue;
         };
         match PacketType::from_str(msg_str) {
-            // Received request to join, check to see if the client is good to join and send
-            // result back
-            Some(PacketType::Join(join)) => {
-                let join_res: JoinResult = {
-                    let mut s = state.lock().unwrap();
-                    let acceptable = check_join_request(&s, &join);
+            // Received a request to join as a guest
+            Some(PacketType::GuestJoinReq(_)) => {
+                let guest_id = if let Ok(mut lock) = state.lock() {
+                    let gid = format!("guest_{}", lock.num_guest);
+                    lock.names.insert(gid.clone());
+                    lock.num_user += 1;
+                    lock.num_guest += 1;
 
-                    // add new user to Session
-                    if acceptable.is_ok() {
-                        match id.lock() {
-                            // Set id for current client handler
-                            Ok(mut lock) if lock.is_empty() => lock.push_str(join.id.as_str()),
-                            // 1. mutex lock failed
-                            // 2. client is trying to join more than once
-                            _ => continue,
-                        }
-
-                        s.names.insert(join.id.clone());
-                        s.num_user += 1;
+                    // Set current user's ID
+                    if let Ok(mut idlock) = id.lock() {
+                        *idlock = gid.clone();
                     }
-
-                    JoinResult {
-                        id: join.id,
-                        result: acceptable.is_ok(),
-                        msg: acceptable.err().unwrap_or(String::from("success")),
-                    }
+                    Some(gid)
+                } else {
+                    // Failed to lock the state for some reason
+                    None
                 };
-                // notify client that it's ok to join
-                _ = msg_tx.send(PacketType::JoinResult(join_res.clone()));
 
-                match id.lock() {
-                    // Join request has been aceepted
-                    Ok(lock) if join_res.result => {
-                        _ = msg_tx.send(PacketType::Connected(Connected {}));
-                        _ = msg_tx.send(PacketType::Message(Message {
-                            id: lock.clone(),
-                            msg: format!("@{} has joined", lock),
-                            is_system: true,
-                        }));
-                    }
-                    _ => (),
-                }
+                // Send response back
+                _ = res_tx
+                    .send(PacketType::GuestJoinRes(GuestJoinRes {
+                        id: match guest_id {
+                            Some(id) => Ok(id),
+                            None => Err(format!("state lock failed")),
+                        },
+                    }))
+                    .await;
             }
-            // Received request to broadcast message
+            // Received a request to create a new account
+            Some(PacketType::RegisterReq(req)) => {
+                let res = RegisterRes {
+                    result: req.user.insert(sqlconn.clone()),
+                };
+                _ = res_tx.send(PacketType::RegisterRes(res)).await;
+            }
+            // Received a request to login
+            Some(PacketType::LoginReq(req)) => {
+                let res = LoginRes {
+                    result: req.login_info.login(sqlconn.clone()),
+                };
+                _ = res_tx.send(PacketType::LoginRes(res)).await;
+            }
+            // Received a request to broadcast message
             Some(PacketType::Message(msg)) => {
                 // Send message to the channel for broadcasting to connected clients
                 _ = msg_tx.send(PacketType::Message(msg));
@@ -146,6 +166,11 @@ async fn session_task(
                 s.num_user -= 1;
 
                 if let Ok(lock) = id.lock() {
+                    // leaving user is a guest
+                    if lock.starts_with("guest_") {
+                        s.num_guest -= 1;
+                    }
+
                     // remove user from Session
                     s.names.remove(lock.as_str());
 
@@ -168,6 +193,7 @@ async fn session_task(
 }
 
 pub async fn run_server(port: String) -> Result<(), Box<dyn std::error::Error>> {
+    println!("[RsChat Sever] Bining on port {}...", port);
     let listener = match TcpListener::bind(format!("0.0.0.0:{}", port)).await {
         Ok(l) => l,
         Err(e) => panic!("{}", e),
@@ -180,12 +206,47 @@ pub async fn run_server(port: String) -> Result<(), Box<dyn std::error::Error>> 
     let state = Arc::new(Mutex::new(session::State {
         names: std::collections::HashSet::new(),
         num_user: 0,
+        num_guest: 0,
     }));
 
-    println!("[RsChat Sever] Listening on port {}...", port);
+    // In-memory sqlite instance
+    let sqlconn = Arc::new(Mutex::new(rusqlite::Connection::open_in_memory()?));
+
+    // Create essential tables / columns
+    if let Ok(lock) = sqlconn.lock() {
+        lock.execute_batch(
+            "BEGIN;
+            CREATE TABLE user (
+                id          TEXT PRIMARY KEY,
+                password    TEXT NOT NULL,
+                bio         TEXT,
+                location    TEXT
+            );
+            INSERT INTO user (
+                id, password, bio, location
+            ) VALUES (
+                'root',
+                'alpine',
+                'root account',
+                ''
+            );
+            COMMIT;
+        ",
+        )
+        .unwrap();
+    } else {
+        panic!("failed to create a table");
+    }
+
+    // We're good to go
     while let Ok(s) = listener.accept().await {
         println!("New connection from: {:?}", s.0);
-        tokio::spawn(session_task(s.0, msg_tx.clone(), state.clone()));
+        tokio::spawn(session_task(
+            s.0,
+            msg_tx.clone(),
+            state.clone(),
+            sqlconn.clone(),
+        ));
     }
     Ok(())
 }

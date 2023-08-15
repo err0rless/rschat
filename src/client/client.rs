@@ -1,53 +1,36 @@
 use std::io::Write;
-use std::str::from_utf8;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::client::command::*;
-use crate::client::error::*;
+use crate::db;
 use crate::packet::packet::*;
 
-type ErrorBox = Box<dyn std::error::Error>;
-
-async fn async_read_line() -> String {
-    _ = tokio::io::stdout().write_all(b"you >> ").await;
-    _ = tokio::io::stdout().flush().await;
-
-    let mut buf: Vec<u8> = Vec::new();
-    let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
-
-    _ = reader.read_until(b'\n', &mut buf).await;
-    buf.pop();
-
-    String::from_utf8(buf).unwrap()
-}
-
-async fn read_id() -> Result<String, ErrorBox> {
-    print!(">> Enter Your ID: ");
-    std::io::stdout().flush().unwrap();
-    Ok(async_read_line().await)
-}
-
-async fn read_tcp_stream(mut rd: ReadHalf<TcpStream>) {
+async fn produce_incomings(mut rd: ReadHalf<TcpStream>, incoming_tx: broadcast::Sender<String>) {
     let mut buf = [0; 1024];
     loop {
         let n = match rd.read(&mut buf).await {
-            Ok(0) => {
+            Ok(0) | Err(_) => {
                 println!("[#System] EOF");
                 return;
             }
             Ok(size) => size,
-            Err(_) => return,
         };
 
-        let msg_str = from_utf8(&buf[0..n]).unwrap();
-        if let Ok(msg) = serde_json::from_str::<Message>(msg_str) {
-            if msg.is_system {
-                println!("[#System] {}", msg.msg);
-            } else {
-                println!("@{}: {}", msg.id, msg.msg);
+        let msg_str = String::from_utf8(buf[0..n].to_vec()).unwrap();
+        _ = incoming_tx.send(msg_str);
+    }
+}
+
+async fn handle_incoming_message(mut incoming_rx: broadcast::Receiver<String>) {
+    loop {
+        if let Ok(msg_str) = incoming_rx.recv().await {
+            match serde_json::from_str::<Message>(msg_str.as_str()) {
+                Ok(msg) if msg.is_system => println!("[#System] {}", msg.msg),
+                Ok(msg) => println!("@{}: {}", msg.id, msg.msg),
+                _ => (),
             }
         }
     }
@@ -62,9 +45,115 @@ async fn consume_outgoings(
     }
 }
 
-async fn produce_message(outgoing_tx: mpsc::Sender<String>, id: String) {
+async fn handle_command(
+    outgoing_tx: &mpsc::Sender<String>,
+    incoming_tx: &broadcast::Sender<String>,
+    cmd: &String,
+    id: &mut String,
+) -> bool {
+    match Command::from_str(&cmd) {
+        Some(Command::Help) => {
+            Command::help();
+        }
+        Some(Command::Get(item)) => match &item[..] {
+            "info" | "name" => {
+                println!("[#cmd:get] Your ID: '{}'", id);
+            }
+            _ => {
+                println!("[#SystemError] Unknown item: '{}'", item);
+            }
+        },
+        Some(Command::Register) => {
+            let user = if let Some(u) = db::user::User::from_stdin().await {
+                u
+            } else {
+                println!("[#System] failed to register");
+                return false;
+            };
+
+            let register_req = RegisterReq { user }.as_json_string();
+            if let Err(e) = outgoing_tx.send(register_req).await {
+                println!("[register] Channel send failed, retry later: {}", e);
+            }
+
+            // block til Register response
+            match consume_til::<RegisterRes>(incoming_tx.subscribe())
+                .await
+                .result
+            {
+                Ok(_) => println!("[#System:Register] Success!"),
+                Err(s) => println!("[#System:Register] Failure: '{}'", s),
+            };
+        }
+        Some(Command::Login(login_id)) => {
+            let login_info = if let Some(u) = db::user::Login::from_stdin(login_id).await {
+                u
+            } else {
+                println!("[#System] failed to login");
+                return false;
+            };
+
+            // id backup
+            let id_clone = login_info.id.clone();
+            if let Err(e) = outgoing_tx
+                .send(LoginReq { login_info }.as_json_string())
+                .await
+            {
+                println!("[login] Channel send failed, retry later: {}", e);
+            }
+
+            // blokc til Login response
+            match consume_til::<LoginRes>(incoming_tx.subscribe())
+                .await
+                .result
+            {
+                Ok(_) => {
+                    *id = id_clone;
+                    println!("[#System:Login] Success!");
+                }
+                Err(s) => println!("[#System:Login] Failure: '{}'", s),
+            };
+        }
+        Some(Command::Exit) => {
+            println!(" >> See you soon <<");
+            _ = outgoing_tx.send(Exit {}.as_json_string()).await;
+            return true;
+        }
+        // Not a command
+        None => (),
+    }
+    false
+}
+
+async fn handle_chat(outgoing_tx: &mpsc::Sender<String>, msg: &String, id: &String) {
+    let msg_bytes = Message {
+        id: id.clone(),
+        msg: msg.clone(),
+        is_system: false,
+    }
+    .as_json_string();
+
+    // send message to server
+    if let Err(e) = outgoing_tx.send(msg_bytes).await {
+        println!("Channel send failed: {}", e);
+    }
+}
+
+async fn chat_shell(
+    outgoing_tx: mpsc::Sender<String>,
+    incoming_tx: broadcast::Sender<String>,
+    mut id: String,
+) {
     loop {
-        print!("you >> ");
+        print!(
+            "{}{} ",
+            id,
+            match id.as_str() {
+                "root" => '#',
+                "guest" => '%',
+                _ => '@',
+            }
+        );
         std::io::stdout().flush().unwrap();
 
         let mut buf: Vec<u8> = Vec::new();
@@ -76,41 +165,30 @@ async fn produce_message(outgoing_tx: mpsc::Sender<String>, id: String) {
         let msg = String::from_utf8(buf).unwrap();
         if msg.is_empty() {
             continue;
-        }
-
-        if msg.starts_with('/') {
+        } else if msg.starts_with('/') {
             // message that starts with '/' is recognized as a command
-            match Command::from_str(&msg) {
-                Some(Command::Help) => {
-                    Command::help();
-                }
-                Some(Command::Exit) => {
-                    println!(" >> See you soon <<");
-                    _ = outgoing_tx.send(Exit {}.as_json_string()).await;
-                    break;
-                }
-                Some(Command::Get(item)) => match &item[..] {
-                    "info" | "name" => {
-                        println!("[#cmd:get] Your ID: '{}'", id);
-                    }
-                    _ => {
-                        println!("[#SystemError] Unknown item: '{}'", item);
-                    }
-                },
-                // Not a command
-                None => (),
+            //
+            // exit if return value of handle_command is true
+            if handle_command(&outgoing_tx, &incoming_tx, &msg, &mut id).await {
+                return;
             }
         } else {
-            let msg_bytes = Message {
-                id: id.clone(),
-                msg: msg.clone(),
-                is_system: false,
-            }
-            .as_json_string();
+            handle_chat(&outgoing_tx, &msg, &id).await;
+        }
+    }
+}
 
-            // send message to server
-            if let Err(e) = outgoing_tx.send(msg_bytes).await {
-                println!("Channel send failed: {}", e);
+// Consumes broadcast channel until encounter the packet type: `T`
+// Ignores packets other than `T`
+async fn consume_til<T>(mut incoming_rx: broadcast::Receiver<String>) -> T
+where
+    T: serde::de::DeserializeOwned,
+{
+    loop {
+        if let Ok(msg) = incoming_rx.recv().await {
+            let j: serde_json::Value = serde_json::from_str(msg.as_str()).unwrap();
+            if let Ok(res) = serde_json::from_value::<T>(j) {
+                break res;
             }
         }
     }
@@ -122,54 +200,41 @@ pub async fn run_client(port: String) -> Result<(), Box<dyn std::error::Error>> 
     println!("|----------------------------------------------|");
 
     // Establish a connection and split into two unidirectional streams
-    let (mut rd, mut wr) = match TcpStream::connect(format!("0.0.0.0:{}", port)).await {
+    let (rd, wr) = match TcpStream::connect(format!("0.0.0.0:{}", port)).await {
         Ok(s) => tokio::io::split(s),
         Err(e) => panic!("{}'", e),
     };
 
-    // Try joining with provided ID
-    let join_res: Result<String, String> = match read_id().await {
-        Ok(id) => {
-            // send Join request
-            let _ = wr.write_all(&Join { id: id.clone() }.as_json_bytes()).await;
-
-            // await JoinResult response
-            let mut buf = vec![0; 1024];
-            loop {
-                if let Ok(n) = rd.read(&mut buf).await {
-                    match PacketType::from_str(from_utf8(&buf[..n]).unwrap()) {
-                        Some(PacketType::JoinResult(r)) => {
-                            break if r.result { Ok(id) } else { Err(r.msg) }
-                        }
-                        _ => continue,
-                    }
-                }
-            }
-        }
-        Err(_) => Err(format!("Failed to read ID from stdin")),
-    };
-
-    let id = match join_res {
-        Ok(s) => {
-            println!("[#System] Hello '{}', Welcome to RsChat", s);
-            s
-        }
-        Err(e) => {
-            std::io::stderr().write_all(format!("Join Failed: {}", e).as_bytes())?;
-            return Err(Box::new(ClientErr::JoinErr));
-        }
-    };
-
-    // Channel for messages that are being sent
+    // Channel for messages will be sent to the server
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<String>(32);
+
+    // Channel for messages received
+    let (incoming_tx, _) = broadcast::channel::<String>(32);
 
     // Task for comsuming the outgoing channel
     tokio::task::spawn(consume_outgoings(wr, outgoing_rx));
 
-    // Task for receiving broadcast messages from server
-    tokio::task::spawn(read_tcp_stream(rd));
+    // Task for reading TcpStream and enqueueing the messages to the channel
+    tokio::task::spawn(produce_incomings(rd, incoming_tx.clone()));
 
-    // Task for communicating with server
-    tokio::task::spawn(produce_message(outgoing_tx.clone(), id.clone())).await?;
+    // Task for receiving broadcast messages from server
+    tokio::task::spawn(handle_incoming_message(incoming_tx.subscribe()));
+
+    // Try joining as a guest
+    let id = {
+        outgoing_tx.send(GuestJoinReq {}.as_json_string()).await?;
+
+        // blocks until server respond to the join request
+        match consume_til::<GuestJoinRes>(incoming_tx.subscribe())
+            .await
+            .id
+        {
+            Ok(r) => r,
+            Err(s) => panic!("{}", s),
+        }
+    };
+
+    // Shell-like interface for chat client
+    tokio::task::spawn(chat_shell(outgoing_tx.clone(), incoming_tx.clone(), id)).await?;
     Ok(())
 }

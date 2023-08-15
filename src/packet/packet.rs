@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::db;
+
 pub trait AsJson {
     fn as_json_string(&self) -> String
     where
@@ -28,25 +30,57 @@ pub struct Message {
 
 impl AsJson for Message {}
 
+// request format for registration
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
+pub struct RegisterReq {
+    pub user: db::user::User,
+}
+
+impl AsJson for RegisterReq {}
+
+// response format for registration
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
+pub struct RegisterRes {
+    pub result: Result<(), String>,
+}
+
+impl AsJson for RegisterRes {}
+
+// request format for login
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
+pub struct LoginReq {
+    pub login_info: db::user::Login,
+}
+
+impl AsJson for LoginReq {}
+
+// response format for login
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
+pub struct LoginRes {
+    pub result: Result<String /* id */, String>,
+}
+
+impl AsJson for LoginRes {}
+
 // Client -> Server
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
-pub struct Join {
-    pub id: String,
-}
+pub struct GuestJoinReq {}
 
-impl AsJson for Join {}
+impl AsJson for GuestJoinReq {}
 
 // Client <- Server
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
-pub struct JoinResult {
-    pub id: String,
-    pub result: bool,
-    pub msg: String,
+pub struct GuestJoinRes {
+    pub id: Result<String, String>,
 }
 
-impl AsJson for JoinResult {}
+impl AsJson for GuestJoinRes {}
 
 // Client -> Server
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -64,8 +98,12 @@ impl AsJson for Exit {}
 
 #[derive(Clone)]
 pub enum PacketType {
-    Join(Join),
-    JoinResult(JoinResult),
+    GuestJoinReq(GuestJoinReq),
+    GuestJoinRes(GuestJoinRes),
+    RegisterReq(RegisterReq),
+    RegisterRes(RegisterRes),
+    LoginReq(LoginReq),
+    LoginRes(LoginRes),
     Connected(Connected),
     Message(Message),
     Exit(Exit),
@@ -85,17 +123,33 @@ impl PacketType {
 
         if let Some(packet_type) = map.get("type") {
             match packet_type.as_str() {
-                Some("Join") => {
-                    let j: Join = serde_json::from_value(json_value).unwrap();
-                    Some(PacketType::Join(j))
+                Some("GuestJoinReq") => {
+                    let j: GuestJoinReq = serde_json::from_value(json_value).unwrap();
+                    Some(PacketType::GuestJoinReq(j))
+                }
+                Some("GuestJoinRes") => {
+                    let r: GuestJoinRes = serde_json::from_value(json_value).unwrap();
+                    Some(PacketType::GuestJoinRes(r))
+                }
+                Some("RegisterReq") => {
+                    let r: RegisterReq = serde_json::from_value(json_value).unwrap();
+                    Some(PacketType::RegisterReq(r))
+                }
+                Some("RegisterRes") => {
+                    let r: RegisterRes = serde_json::from_value(json_value).unwrap();
+                    Some(PacketType::RegisterRes(r))
+                }
+                Some("LoginReq") => {
+                    let r: LoginReq = serde_json::from_value(json_value).unwrap();
+                    Some(PacketType::LoginReq(r))
+                }
+                Some("LoginRes") => {
+                    let r: LoginRes = serde_json::from_value(json_value).unwrap();
+                    Some(PacketType::LoginRes(r))
                 }
                 Some("Message") => {
                     let m: Message = serde_json::from_value(json_value).unwrap();
                     Some(PacketType::Message(m))
-                }
-                Some("JoinResult") => {
-                    let r: JoinResult = serde_json::from_value(json_value).unwrap();
-                    Some(PacketType::JoinResult(r))
                 }
                 Some("Connected") => Some(PacketType::Connected(Connected {})),
                 Some("Exit") => Some(PacketType::Exit(Exit {})),

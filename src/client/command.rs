@@ -1,6 +1,8 @@
 pub enum Command {
     Help,
     Get(String),
+    Register,
+    Login(Option<String>),
     Exit,
 }
 
@@ -20,12 +22,17 @@ impl Command {
         match command {
             "exit" => Some(Command::Exit),
             "help" => Some(Command::Help),
+            "register" => Some(Command::Register),
+            "login" => Some(Command::Login(match cmdline.find(' ') {
+                Some(idx) => Some(String::from(cmdline[idx + 1..].trim())),
+                None => None,
+            })),
             "get" => {
                 if let Some(idx) = cmdline.find(' ') {
                     let item = String::from(cmdline[idx + 1..].trim());
                     Some(Command::Get(item))
                 } else {
-                    println!("[#SystemError] Command 'get' requires argument: 'get <key>'");
+                    println!("[#SystemError] Command 'get' requires an argument: 'get <key>'");
                     None
                 }
             }
@@ -39,6 +46,8 @@ impl Command {
     pub fn help() {
         println!(" | ----- Help -----");
         println!(" | /help: help message");
+        println!(" | /register: try to register");
+        println!(" | /login: try to login");
         println!(" | /get <key>: get information");
         println!(" | /exit: exit from chat");
     }
