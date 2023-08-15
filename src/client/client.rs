@@ -12,10 +12,7 @@ async fn produce_incomings(mut rd: ReadHalf<TcpStream>, incoming_tx: broadcast::
     let mut buf = [0; 1024];
     loop {
         let n = match rd.read(&mut buf).await {
-            Ok(0) | Err(_) => {
-                println!("[#System] EOF");
-                return;
-            }
+            Ok(0) | Err(_) => panic!("[#System] EOF"),
             Ok(size) => size,
         };
 
@@ -102,12 +99,13 @@ async fn handle_command(
                 println!("[login] Channel send failed, retry later: {}", e);
             }
 
-            // blokc til Login response
+            // block til Login response
             match consume_til::<LoginRes>(incoming_tx.subscribe())
                 .await
                 .result
             {
                 Ok(_) => {
+                    // Succeded to login, set id
                     *id = id_clone;
                     println!("[#System:Login] Success!");
                 }

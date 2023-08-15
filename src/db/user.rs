@@ -56,7 +56,9 @@ impl User {
 
     // check if self is valid
     pub fn insert(&self, sql: Arc<Mutex<rusqlite::Connection>>) -> Result<(), String> {
-        if self.password.len() < 4 {
+        if self.id.starts_with("guest_") || self.id.starts_with("root") {
+            return Err(format!("Reserved id format"));
+        } else if self.password.len() < 4 {
             return Err(format!("too short password! (password >= 4)"));
         }
 
@@ -103,14 +105,17 @@ impl Login {
     }
 
     pub fn login(&self, sql: Arc<Mutex<rusqlite::Connection>>) -> Result<String, String> {
-        let conn = sql.lock().unwrap();
-        match conn.query_row(
-            "SELECT id FROM user WHERE id=?1 AND password=?2",
-            rusqlite::params![&self.id, &self.password],
-            |row| row.get::<_, String>(0),
-        ) {
-            Ok(r) => Ok(r),
-            Err(e) => Err(e.to_string()),
+        if let Ok(conn) = sql.lock() {
+            match conn.query_row(
+                "SELECT id FROM user WHERE id=?1 AND password=?2",
+                [&self.id, &self.password],
+                |row| row.get::<_, String>(0),
+            ) {
+                Ok(r) => Ok(r),
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            Err("Failed to lock sql connection".to_string())
         }
     }
 }
