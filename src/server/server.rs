@@ -139,7 +139,10 @@ async fn session_task(
                 _ = res_tx
                     .send(PacketType::GuestJoinRes(GuestJoinRes {
                         id: match guest_id {
-                            Some(id) => Ok(id),
+                            Some(id) => {
+                                _ = msg_tx.send(PacketType::Message(Message::connection(&id)));
+                                Ok(id)
+                            }
                             None => Err(format!("state lock failed")),
                         },
                     }))
@@ -164,6 +167,10 @@ async fn session_task(
                                 lock.num_guest -= 1;
                                 lock.num_user += 1;
                                 lock.names.insert(req.login_info.id.clone());
+
+                                _ = msg_tx.send(PacketType::Message(Message::connection(
+                                    &req.login_info.id.clone(),
+                                )));
                             }
                             res
                         }
@@ -181,24 +188,19 @@ async fn session_task(
             // Received exit notification from client, remove the client from current session
             Some(PacketType::Exit(_)) => {
                 let mut s = state.lock().unwrap();
-                s.num_user -= 1;
-
                 if let Ok(lock) = id.lock() {
                     // leaving user is a guest
                     if lock.starts_with("guest_") {
                         s.num_guest -= 1;
+                    } else {
+                        s.num_user -= 1;
                     }
 
                     // remove user from Session
                     s.names.remove(lock.as_str());
 
-                    // notify other clients that this client has left
-                    let exit_notification = Message {
-                        id: lock.clone(),
-                        msg: format!("@{} has left the server", lock),
-                        is_system: true,
-                    };
-                    _ = msg_tx.send(PacketType::Message(exit_notification));
+                    // disconnection broadcasting
+                    _ = msg_tx.send(PacketType::Message(Message::disconnection(&lock.clone())));
                 }
                 return;
             }

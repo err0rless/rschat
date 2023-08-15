@@ -28,6 +28,24 @@ pub struct Message {
     pub is_system: bool,
 }
 
+impl Message {
+    pub fn connection(id: &String) -> Self {
+        Self {
+            id: id.clone(),
+            msg: format!("{} has joined", id),
+            is_system: true,
+        }
+    }
+
+    pub fn disconnection(id: &String) -> Self {
+        Self {
+            id: id.clone(),
+            msg: format!("{} has left", id),
+            is_system: true,
+        }
+    }
+}
+
 impl AsJson for Message {}
 
 // request format for registration
