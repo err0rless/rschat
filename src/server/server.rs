@@ -116,16 +116,20 @@ async fn session_task(
             // Received a request to join as a guest
             Some(PacketType::GuestJoinReq(_)) => {
                 let guest_id = if let Ok(mut lock) = state.lock() {
-                    let gid = format!("guest_{}", lock.num_guest);
-                    lock.names.insert(gid.clone());
-                    lock.num_user += 1;
-                    lock.num_guest += 1;
+                    if lock.num_guest >= session::NUM_MAX_GUEST {
+                        None
+                    } else {
+                        let gid = format!("guest_{}", lock.num_guest);
+                        lock.names.insert(gid.clone());
+                        lock.num_user += 1;
+                        lock.num_guest += 1;
 
-                    // Set current user's ID
-                    if let Ok(mut idlock) = id.lock() {
-                        *idlock = gid.clone();
+                        // Set current user's ID
+                        if let Ok(mut idlock) = id.lock() {
+                            *idlock = gid.clone();
+                        }
+                        Some(gid)
                     }
-                    Some(gid)
                 } else {
                     // Failed to lock the state for some reason
                     None
@@ -151,7 +155,21 @@ async fn session_task(
             // Received a request to login
             Some(PacketType::LoginReq(req)) => {
                 let res = LoginRes {
-                    result: req.login_info.login(sqlconn.clone()),
+                    result: if let Ok(mut lock) = state.lock() {
+                        if lock.num_user >= session::NUM_MAX_USER {
+                            Err(format!("too many users"))
+                        } else {
+                            let res = req.login_info.login(sqlconn.clone());
+                            if res.is_ok() {
+                                lock.num_guest -= 1;
+                                lock.num_user += 1;
+                                lock.names.insert(req.login_info.id.clone());
+                            }
+                            res
+                        }
+                    } else {
+                        Err(format!("state lock failed"))
+                    },
                 };
                 _ = res_tx.send(PacketType::LoginRes(res)).await;
             }

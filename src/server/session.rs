@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+pub const NUM_MAX_GUEST: usize = 32;
 pub const NUM_MAX_USER: usize = 32;
 
 pub struct State {

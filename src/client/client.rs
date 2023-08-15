@@ -5,8 +5,17 @@ use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::client::command::*;
+use crate::client::session;
 use crate::db;
 use crate::packet::packet::*;
+
+fn get_mark(id: &String) -> char {
+    match id.as_str() {
+        s if s.starts_with("guest_") => '%',
+        s if s.starts_with("root") => '#',
+        _ => '@',
+    }
+}
 
 async fn produce_incomings(mut rd: ReadHalf<TcpStream>, incoming_tx: broadcast::Sender<String>) {
     let mut buf = [0; 1024];
@@ -26,7 +35,7 @@ async fn handle_incoming_message(mut incoming_rx: broadcast::Receiver<String>) {
         if let Ok(msg_str) = incoming_rx.recv().await {
             match serde_json::from_str::<Message>(msg_str.as_str()) {
                 Ok(msg) if msg.is_system => println!("[#System] {}", msg.msg),
-                Ok(msg) => println!("@{}: {}", msg.id, msg.msg),
+                Ok(msg) => println!("{}{}: {}", get_mark(&msg.id), msg.id, msg.msg),
                 _ => (),
             }
         }
@@ -46,7 +55,7 @@ async fn handle_command(
     outgoing_tx: &mpsc::Sender<String>,
     incoming_tx: &broadcast::Sender<String>,
     cmd: &String,
-    id: &mut String,
+    state: &mut session::State,
 ) -> bool {
     match Command::from_str(&cmd) {
         Some(Command::Help) => {
@@ -54,7 +63,7 @@ async fn handle_command(
         }
         Some(Command::Get(item)) => match &item[..] {
             "info" | "name" => {
-                println!("[#cmd:get] Your ID: '{}'", id);
+                println!("[#cmd:get] Your ID: '{}'", state.id);
             }
             _ => {
                 println!("[#SystemError] Unknown item: '{}'", item);
@@ -83,6 +92,11 @@ async fn handle_command(
             };
         }
         Some(Command::Login(login_id)) => {
+            if !state.is_guest {
+                println!("[#System] You are already logged in");
+                return false;
+            }
+
             let login_info = if let Some(u) = db::user::Login::from_stdin(login_id).await {
                 u
             } else {
@@ -105,8 +119,9 @@ async fn handle_command(
                 .result
             {
                 Ok(_) => {
-                    // Succeded to login, set id
-                    *id = id_clone;
+                    // Succeded to login, you are no longer a guest
+                    state.id = id_clone;
+                    state.is_guest = false;
                     println!("[#System:Login] Success!");
                 }
                 Err(s) => println!("[#System:Login] Failure: '{}'", s),
@@ -123,9 +138,9 @@ async fn handle_command(
     false
 }
 
-async fn handle_chat(outgoing_tx: &mpsc::Sender<String>, msg: &String, id: &String) {
+async fn handle_chat(outgoing_tx: &mpsc::Sender<String>, msg: &String, state: &session::State) {
     let msg_bytes = Message {
-        id: id.clone(),
+        id: state.id.clone(),
         msg: msg.clone(),
         is_system: false,
     }
@@ -140,18 +155,10 @@ async fn handle_chat(outgoing_tx: &mpsc::Sender<String>, msg: &String, id: &Stri
 async fn chat_shell(
     outgoing_tx: mpsc::Sender<String>,
     incoming_tx: broadcast::Sender<String>,
-    mut id: String,
+    mut state: session::State,
 ) {
     loop {
-        print!(
-            "{}{} ",
-            id,
-            match id.as_str() {
-                "root" => '#',
-                "guest" => '%',
-                _ => '@',
-            }
-        );
+        print!("You ({}{}) >> ", get_mark(&state.id), state.id,);
         std::io::stdout().flush().unwrap();
 
         let mut buf: Vec<u8> = Vec::new();
@@ -167,11 +174,11 @@ async fn chat_shell(
             // message that starts with '/' is recognized as a command
             //
             // exit if return value of handle_command is true
-            if handle_command(&outgoing_tx, &incoming_tx, &msg, &mut id).await {
+            if handle_command(&outgoing_tx, &incoming_tx, &msg, &mut state).await {
                 return;
             }
         } else {
-            handle_chat(&outgoing_tx, &msg, &id).await;
+            handle_chat(&outgoing_tx, &msg, &state).await;
         }
     }
 }
@@ -232,7 +239,12 @@ pub async fn run_client(port: String) -> Result<(), Box<dyn std::error::Error>> 
         }
     };
 
+    let state = session::State {
+        is_guest: true,
+        id: id.clone(),
+    };
+
     // Shell-like interface for chat client
-    tokio::task::spawn(chat_shell(outgoing_tx.clone(), incoming_tx.clone(), id)).await?;
+    tokio::task::spawn(chat_shell(outgoing_tx.clone(), incoming_tx.clone(), state)).await?;
     Ok(())
 }
