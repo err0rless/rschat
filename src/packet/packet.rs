@@ -32,7 +32,7 @@ impl Message {
     pub fn connection(id: &String) -> Self {
         Self {
             id: id.clone(),
-            msg: format!("{} has joined", id),
+            msg: format!("'{}' has joined", id),
             is_system: true,
         }
     }
@@ -40,7 +40,7 @@ impl Message {
     pub fn disconnection(id: &String) -> Self {
         Self {
             id: id.clone(),
-            msg: format!("{} has left", id),
+            msg: format!("'{}' has left", id),
             is_system: true,
         }
     }
