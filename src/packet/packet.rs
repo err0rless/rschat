@@ -19,6 +19,8 @@ pub trait AsJson {
     }
 }
 
+impl AsJson for serde_json::Value {}
+
 // Client -> Server -> Other clients
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]

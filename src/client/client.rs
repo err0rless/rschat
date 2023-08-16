@@ -18,9 +18,16 @@ fn get_mark(id: &String) -> char {
 }
 
 async fn produce_incomings(mut rd: ReadHalf<TcpStream>, incoming_tx: broadcast::Sender<String>) {
-    let mut buf = [0; 1024];
     loop {
-        let n = match rd.read(&mut buf).await {
+        // Size header
+        let size_msg = match rd.read_u32().await {
+            Ok(0) | Err(_) => panic!("[#System] EOF"),
+            Ok(size) => size,
+        };
+
+        // Message body
+        let mut buf = vec![0; size_msg as usize];
+        let n = match rd.read_exact(buf.as_mut_slice()).await {
             Ok(0) | Err(_) => panic!("[#System] EOF"),
             Ok(size) => size,
         };

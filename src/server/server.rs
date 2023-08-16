@@ -8,6 +8,17 @@ use tokio::sync::{broadcast, mpsc};
 use crate::packet::packet::*;
 use crate::server::session;
 
+/// Write `packet` to the TCP stream with size header
+async fn send_sized_msg<P>(wr: &mut WriteHalf<TcpStream>, packet: P)
+where
+    P: AsJson + serde::Serialize,
+{
+    // super simple message protocol [Size: u32][Message: String]
+    let packet_bytes = packet.as_json_bytes();
+    _ = wr.write_u32(packet_bytes.len() as u32).await;
+    _ = wr.write_all(&packet_bytes).await;
+}
+
 async fn channel_consumer(
     mut msg_rx: broadcast::Receiver<PacketType>,
     mut res_rx: mpsc::Receiver<PacketType>,
@@ -36,7 +47,7 @@ async fn channel_consumer(
 
                     // Write message to the stream
                     if let Ok(msg_json) = serde_json::to_value(msg) {
-                        _ = wr.write_all(msg_json.to_string().as_bytes()).await;
+                        send_sized_msg(&mut wr, msg_json).await;
                     }
                 }
                 Ok(PacketType::Connected(_)) => {
@@ -53,10 +64,10 @@ async fn channel_consumer(
                     if r.id.is_ok() {
                         connected.store(true, Ordering::Relaxed);
                     }
-                    _ = wr.write_all(&r.as_json_bytes()).await;
+                    send_sized_msg(&mut wr, r).await;
                 }
                 Some(PacketType::RegisterRes(r)) => {
-                    _ = wr.write_all(&r.as_json_bytes()).await;
+                    send_sized_msg(&mut wr, r).await;
                 }
                 Some(PacketType::LoginRes(r)) => {
                     if let Ok(mut lock) = id.lock() {
@@ -65,7 +76,7 @@ async fn channel_consumer(
                             *lock = login_id.clone();
                         }
                     }
-                    _ = wr.write_all(&r.as_json_bytes()).await;
+                    send_sized_msg(&mut wr, r).await;
                 }
                 _ => continue,
             },
@@ -167,6 +178,10 @@ async fn session_task(
                                 lock.num_guest -= 1;
                                 lock.num_user += 1;
                                 lock.names.insert(req.login_info.id.clone());
+
+                                _ = msg_tx.send(PacketType::Message(Message::connection(
+                                    &req.login_info.id,
+                                )));
                             }
                             res
                         }
