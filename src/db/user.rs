@@ -49,7 +49,7 @@ impl User {
         } else {
             Some(Self {
                 id,
-                password: hash::sha256_string(&password),
+                password: hash::sha256_password(&password),
                 bio: if bio.is_empty() { None } else { Some(bio) },
                 location: if loc.is_empty() { None } else { Some(loc) },
             })
@@ -104,7 +104,7 @@ impl Login {
         } else {
             Some(Self {
                 id,
-                password: hash::sha256_string(&password),
+                password: hash::sha256_password(&password),
             })
         }
     }
