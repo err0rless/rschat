@@ -69,12 +69,15 @@ async fn channel_consumer(
                 Some(PacketType::RegisterRes(r)) => {
                     send_sized_msg(&mut wr, r).await;
                 }
-                Some(PacketType::LoginRes(r)) => {
+                Some(PacketType::LoginRes(mut r)) => {
                     if let Ok(mut lock) = id.lock() {
                         // Login succeeded, set current user's ID
                         if let Ok(login_id) = &r.result {
                             *lock = login_id.clone();
                         }
+                    } else if r.result.is_ok() {
+                        // somehow failed to lock the id
+                        r.result = Err(format!("failed to login"));
                     }
                     send_sized_msg(&mut wr, r).await;
                 }

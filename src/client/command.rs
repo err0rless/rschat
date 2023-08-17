@@ -32,7 +32,7 @@ impl Command {
                     let item = String::from(cmdline[idx + 1..].trim());
                     Some(Command::Get(item))
                 } else {
-                    println!("[#SystemError] Command 'get' requires an argument: 'get <key>'");
+                    println!("[#SystemError] Command 'get' requires an argument: '[key]'");
                     None
                 }
             }
@@ -46,9 +46,9 @@ impl Command {
     pub fn help() {
         println!(" | ----- Help -----");
         println!(" | /help: help message");
-        println!(" | /register: try to register");
-        println!(" | /login: try to login");
-        println!(" | /get <key>: get information");
+        println!(" | /register: register a new member");
+        println!(" | /login <optional:id>: log in");
+        println!(" | /get [required:key]: get information");
         println!(" | /exit: exit from chat");
     }
 }
