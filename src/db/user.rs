@@ -83,11 +83,20 @@ impl User {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Login {
-    pub id: String,
-    pub password: String,
+    pub guest: bool,
+    pub id: Option<String>,
+    pub password: Option<String>,
 }
 
 impl Login {
+    pub fn guest() -> Self {
+        Self {
+            guest: true,
+            id: None,
+            password: None,
+        }
+    }
+
     pub async fn from_stdin(id: Option<String>) -> Option<Self> {
         let id = if let Some(id) = id {
             id
@@ -103,8 +112,9 @@ impl Login {
             None
         } else {
             Some(Self {
-                id,
-                password: hash::sha256_password(&password),
+                guest: false,
+                id: Some(id),
+                password: Some(hash::sha256_password(&password)),
             })
         }
     }

@@ -112,7 +112,7 @@ async fn handle_command(
             };
 
             // id backup
-            let id_clone = login_info.id.clone();
+            let id_clone = login_info.id.clone().unwrap();
             if let Err(e) = outgoing_tx
                 .send(LoginReq { login_info }.as_json_string())
                 .await
@@ -234,12 +234,19 @@ pub async fn run_client(port: String) -> Result<(), Box<dyn std::error::Error>> 
 
     // Try joining as a guest
     let id = {
-        outgoing_tx.send(GuestJoinReq {}.as_json_string()).await?;
+        outgoing_tx
+            .send(
+                LoginReq {
+                    login_info: db::user::Login::guest(),
+                }
+                .as_json_string(),
+            )
+            .await?;
 
         // blocks until server respond to the join request
-        match consume_til::<GuestJoinRes>(incoming_tx.subscribe())
+        match consume_til::<LoginRes>(incoming_tx.subscribe())
             .await
-            .id
+            .result
         {
             Ok(r) => r,
             Err(s) => panic!("{}", s),

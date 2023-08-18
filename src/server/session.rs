@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-pub const NUM_MAX_GUEST: usize = 32;
-pub const NUM_MAX_USER: usize = 32;
+pub const NUM_MAX_GUEST: usize = 64;
+pub const NUM_MAX_USER: usize = 128;
 
 pub struct State {
     pub names: HashSet<String>,

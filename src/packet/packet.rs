@@ -89,22 +89,6 @@ impl AsJson for LoginRes {}
 // Client -> Server
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
-pub struct GuestJoinReq {}
-
-impl AsJson for GuestJoinReq {}
-
-// Client <- Server
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
-pub struct GuestJoinRes {
-    pub id: Result<String, String>,
-}
-
-impl AsJson for GuestJoinRes {}
-
-// Client -> Server
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
 pub struct Connected {}
 
 impl AsJson for Connected {}
@@ -118,8 +102,6 @@ impl AsJson for Exit {}
 
 #[derive(Clone)]
 pub enum PacketType {
-    GuestJoinReq(GuestJoinReq),
-    GuestJoinRes(GuestJoinRes),
     RegisterReq(RegisterReq),
     RegisterRes(RegisterRes),
     LoginReq(LoginReq),
@@ -143,14 +125,6 @@ impl PacketType {
 
         if let Some(packet_type) = map.get("type") {
             match packet_type.as_str() {
-                Some("GuestJoinReq") => {
-                    let j: GuestJoinReq = serde_json::from_value(json_value).unwrap();
-                    Some(PacketType::GuestJoinReq(j))
-                }
-                Some("GuestJoinRes") => {
-                    let r: GuestJoinRes = serde_json::from_value(json_value).unwrap();
-                    Some(PacketType::GuestJoinRes(r))
-                }
                 Some("RegisterReq") => {
                     let r: RegisterReq = serde_json::from_value(json_value).unwrap();
                     Some(PacketType::RegisterReq(r))

@@ -5,6 +5,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc};
 
+use rand::prelude::*;
+
 use crate::packet::packet::*;
 use crate::server::session;
 
@@ -60,19 +62,14 @@ async fn channel_consumer(
             // Any one-on-one comminucation between client and server such as request/response should
             // be sent to this channel
             res = res_rx.recv() => match res {
-                Some(PacketType::GuestJoinRes(r)) => {
-                    if r.id.is_ok() {
-                        connected.store(true, Ordering::Relaxed);
-                    }
-                    send_sized_msg(&mut wr, r).await;
-                }
                 Some(PacketType::RegisterRes(r)) => {
                     send_sized_msg(&mut wr, r).await;
                 }
                 Some(PacketType::LoginRes(mut r)) => {
+                    // Login was successful, update the id
                     if let Ok(mut lock) = id.lock() {
-                        // Login succeeded, set current user's ID
                         if let Ok(login_id) = &r.result {
+                            connected.store(true, Ordering::Relaxed);
                             *lock = login_id.clone();
                         }
                     } else if r.result.is_ok() {
@@ -127,41 +124,6 @@ async fn session_task(
             continue;
         };
         match PacketType::from_str(msg_str) {
-            // Received a request to join as a guest
-            Some(PacketType::GuestJoinReq(_)) => {
-                let guest_id = if let Ok(mut lock) = state.lock() {
-                    if lock.num_guest >= session::NUM_MAX_GUEST {
-                        None
-                    } else {
-                        let gid = format!("guest_{}", lock.num_guest);
-                        lock.names.insert(gid.clone());
-                        lock.num_user += 1;
-                        lock.num_guest += 1;
-
-                        // Set current user's ID
-                        if let Ok(mut idlock) = id.lock() {
-                            *idlock = gid.clone();
-                        }
-                        Some(gid)
-                    }
-                } else {
-                    // Failed to lock the state for some reason
-                    None
-                };
-
-                // Send response back
-                _ = res_tx
-                    .send(PacketType::GuestJoinRes(GuestJoinRes {
-                        id: match guest_id {
-                            Some(id) => {
-                                _ = msg_tx.send(PacketType::Message(Message::connection(&id)));
-                                Ok(id)
-                            }
-                            None => Err(format!("state lock failed")),
-                        },
-                    }))
-                    .await;
-            }
             // Received a request to create a new account
             Some(PacketType::RegisterReq(req)) => {
                 let res = RegisterRes {
@@ -172,24 +134,60 @@ async fn session_task(
             // Received a request to login
             Some(PacketType::LoginReq(req)) => {
                 let res = LoginRes {
-                    result: if let Ok(mut lock) = state.lock() {
-                        if lock.num_user >= session::NUM_MAX_USER {
-                            Err(format!("too many users"))
-                        } else {
-                            let res = req.login_info.login(sqlconn.clone());
-                            if res.is_ok() {
-                                lock.num_guest -= 1;
-                                lock.num_user += 1;
-                                lock.names.insert(req.login_info.id.clone());
+                    result: 'outer: {
+                        if let Ok(mut lock) = state.lock() {
+                            if req.login_info.guest {
+                                // Guets Login
+                                if lock.num_guest >= session::NUM_MAX_GUEST {
+                                    break 'outer Err(format!("too many guests"));
+                                }
 
-                                _ = msg_tx.send(PacketType::Message(Message::connection(
-                                    &req.login_info.id,
-                                )));
+                                // Generate a random guest name
+                                let mut rng = rand::thread_rng();
+                                let guest_id = loop {
+                                    let rand_suffix: u16 = rng.gen();
+                                    let gid = format!("guest_{}", rand_suffix);
+
+                                    // duplicate check
+                                    if lock.names.contains(&gid) {
+                                        continue;
+                                    } else {
+                                        break gid;
+                                    }
+                                };
+
+                                // state modification
+                                lock.names.insert(guest_id.clone());
+                                lock.num_guest += 1;
+
+                                Ok(guest_id.clone())
+                            } else {
+                                // Account Login
+                                if lock.num_user >= session::NUM_MAX_USER {
+                                    break 'outer Err(format!("too many users"));
+                                }
+
+                                // validation of inputs was done before this packet reached here, but somehow it's broken
+                                if req.login_info.id.is_none() || req.login_info.password.is_none()
+                                {
+                                    break 'outer Err(format!("broken login packet"));
+                                }
+
+                                let res = req.login_info.login(sqlconn.clone());
+                                if res.is_ok() {
+                                    lock.num_guest -= 1; // every connection is a guest at first
+                                    lock.num_user += 1;
+                                    lock.names.insert(req.login_info.id.clone().unwrap());
+
+                                    _ = msg_tx.send(PacketType::Message(Message::connection(
+                                        &req.login_info.id.unwrap(),
+                                    )));
+                                }
+                                res
                             }
-                            res
+                        } else {
+                            Err(format!("unknown error!"))
                         }
-                    } else {
-                        Err(format!("state lock failed"))
                     },
                 };
                 _ = res_tx.send(PacketType::LoginRes(res)).await;
