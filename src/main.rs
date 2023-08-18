@@ -14,12 +14,7 @@ fn usage() {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // running target: `client` or `server`
-    let target = if let Some(t) = std::env::args().nth(1) {
-        t
-    } else {
-        usage();
-        return Ok(());
-    };
+    let target = std::env::args().nth(1);
 
     // port number
     let port = std::env::args()
@@ -27,9 +22,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(String::from(DEFAULT_PORT_NUM));
 
     // run the target
-    match target.as_str() {
-        "client" => client::client::run_client(port).await?,
-        "server" => server::server::run_server(port).await?,
+    match target.as_deref() {
+        Some("client") => client::client::run_client(port).await?,
+        Some("server") => server::server::run_server(port).await?,
         _ => usage(),
     }
     Ok(())
