@@ -6,10 +6,20 @@ mod server;
 
 const DEFAULT_PORT_NUM: &str = "8080";
 
+fn usage() {
+    println!("Usage: ./rschat 'target'");
+    println!("   available targets: 'client', 'server'");
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // running target: `client` or `server`
-    let target = std::env::args().nth(1).unwrap();
+    let target = if let Some(t) = std::env::args().nth(1) {
+        t
+    } else {
+        usage();
+        return Ok(());
+    };
 
     // port number
     let port = std::env::args()
@@ -20,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match target.as_str() {
         "client" => client::client::run_client(port).await?,
         "server" => server::server::run_server(port).await?,
-        t => panic!("Unknown target: '{t}'"),
+        _ => usage(),
     }
     Ok(())
 }
