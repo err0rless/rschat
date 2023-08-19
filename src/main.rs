@@ -23,8 +23,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // run the target
     match target.as_deref() {
-        Some("client") => client::client::run_client(port).await?,
-        Some("server") => server::server::run_server(port).await?,
+        Some("client") => client::run_client(port).await?,
+        Some("server") => server::run_server(port).await?,
         _ => usage(),
     }
     Ok(())

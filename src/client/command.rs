@@ -21,12 +21,13 @@ impl Command {
 
         match command {
             "exit" => Some(Command::Exit),
-            "help" => Some(Command::Help),
-            "register" => Some(Command::Register),
-            "login" => Some(Command::Login(match cmdline.find(' ') {
-                Some(idx) => Some(String::from(cmdline[idx + 1..].trim())),
-                None => None,
-            })),
+            "help" | "h" => Some(Command::Help),
+            "register" | "reg" => Some(Command::Register),
+            "login" => Some(Command::Login(
+                cmdline
+                    .find(' ')
+                    .map(|idx| String::from(cmdline[idx + 1..].trim())),
+            )),
             "get" => {
                 if let Some(idx) = cmdline.find(' ') {
                     let item = String::from(cmdline[idx + 1..].trim());

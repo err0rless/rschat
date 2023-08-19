@@ -15,8 +15,8 @@ pub fn sha256_string(s: &String) -> String {
 }
 
 /// SHA256 hashing for `password` with custom hash salt
-pub fn sha256_password(password: &String) -> String {
+pub fn sha256_password(password: &str) -> String {
     // Append hash salt
-    let salted_pw = password.clone() + PASSWORD_SALT;
+    let salted_pw = password.to_owned() + PASSWORD_SALT;
     sha256_string(&salted_pw)
 }
