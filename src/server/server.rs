@@ -135,58 +135,56 @@ async fn session_task(
             Some(PacketType::LoginReq(req)) => {
                 let res = LoginRes {
                     result: 'outer: {
-                        if let Ok(mut lock) = state.lock() {
-                            if req.login_info.guest {
-                                // Guets Login
-                                if lock.num_guest >= session::NUM_MAX_GUEST {
-                                    break 'outer Err(format!("too many guests"));
-                                }
-
-                                // Generate a random guest name
-                                let mut rng = rand::thread_rng();
-                                let guest_id = loop {
-                                    let rand_suffix: u16 = rng.gen();
-                                    let gid = format!("guest_{}", rand_suffix);
-
-                                    // duplicate check
-                                    if lock.names.contains(&gid) {
-                                        continue;
-                                    } else {
-                                        break gid;
-                                    }
-                                };
-
-                                // state modification
-                                lock.names.insert(guest_id.clone());
-                                lock.num_guest += 1;
-
-                                Ok(guest_id.clone())
-                            } else {
-                                // Account Login
-                                if lock.num_user >= session::NUM_MAX_USER {
-                                    break 'outer Err(format!("too many users"));
-                                }
-
-                                // validation of inputs was done before this packet reached here, but somehow it's broken
-                                if req.login_info.id.is_none() || req.login_info.password.is_none()
-                                {
-                                    break 'outer Err(format!("broken login packet"));
-                                }
-
-                                let res = req.login_info.login(sqlconn.clone());
-                                if res.is_ok() {
-                                    lock.num_guest -= 1; // every connection is a guest at first
-                                    lock.num_user += 1;
-                                    lock.names.insert(req.login_info.id.clone().unwrap());
-
-                                    _ = msg_tx.send(PacketType::Message(Message::connection(
-                                        &req.login_info.id.unwrap(),
-                                    )));
-                                }
-                                res
-                            }
+                        let mut lock = if let Ok(lock) = state.lock() {
+                            lock
                         } else {
-                            Err(format!("unknown error!"))
+                            break 'outer Err(format!("unknown error!"));
+                        };
+
+                        if req.login_info.guest {
+                            // Guets Login
+                            if lock.num_guest >= session::NUM_MAX_GUEST {
+                                break 'outer Err(format!("too many guests"));
+                            }
+
+                            // Generate a random guest name
+                            let mut rng = rand::thread_rng();
+                            let guest_id = loop {
+                                let random_id = format!("guest_{}", rng.gen::<u16>());
+
+                                // duplicate check
+                                if !lock.names.contains(&random_id) {
+                                    break random_id;
+                                }
+                            };
+
+                            // state modification
+                            lock.names.insert(guest_id.clone());
+                            lock.num_guest += 1;
+
+                            Ok(guest_id.clone())
+                        } else {
+                            // Account Login
+                            if lock.num_user >= session::NUM_MAX_USER {
+                                break 'outer Err(format!("too many users"));
+                            }
+
+                            // validation of inputs was done before this packet reached here, but somehow it's broken
+                            if req.login_info.id.is_none() || req.login_info.password.is_none() {
+                                break 'outer Err(format!("broken login packet"));
+                            }
+
+                            let res = req.login_info.login(sqlconn.clone());
+                            if res.is_ok() {
+                                lock.num_guest -= 1; // every connection is a guest at first
+                                lock.num_user += 1;
+                                lock.names.insert(req.login_info.id.clone().unwrap());
+
+                                _ = msg_tx.send(PacketType::Message(Message::connection(
+                                    &req.login_info.id.unwrap(),
+                                )));
+                            }
+                            res
                         }
                     },
                 };
