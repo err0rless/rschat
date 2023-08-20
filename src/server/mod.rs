@@ -78,6 +78,9 @@ async fn channel_consumer(
                     }
                     send_sized_msg(&mut wr, r).await;
                 }
+                Some(PacketType::FetchRes(r)) => {
+                    send_sized_msg(&mut wr, r).await;
+                }
                 _ => continue,
             },
         }
@@ -190,6 +193,36 @@ async fn session_task(
                     },
                 };
                 _ = res_tx.send(PacketType::LoginRes(res)).await;
+            }
+            Some(PacketType::FetchReq(fetch)) => {
+                let fetch_res = match fetch.item.as_str() {
+                    "list" => {
+                        let info = if let Ok(lock) = state.lock() {
+                            (
+                                lock.names.iter().map(String::from).collect::<Vec<String>>(),
+                                lock.num_user,
+                                lock.num_guest,
+                            )
+                        } else {
+                            continue;
+                        };
+
+                        FetchRes {
+                            item: fetch.item,
+                            result: Ok(serde_json::json!({
+                                "user_list": info.0,
+                                "num_user": info.1,
+                                "num_guest": info.2,
+                            })),
+                        }
+                    }
+                    // Handling unknown fetch items
+                    _ => FetchRes {
+                        item: fetch.item,
+                        result: Err("unknown fetch item".to_owned()),
+                    },
+                };
+                _ = res_tx.send(PacketType::FetchRes(fetch_res)).await;
             }
             // Received a request to broadcast message
             Some(PacketType::Message(msg)) => {

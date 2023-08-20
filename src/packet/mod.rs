@@ -86,6 +86,25 @@ pub struct LoginRes {
 
 impl AsJson for LoginRes {}
 
+// Fetch information request format
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
+pub struct FetchReq {
+    pub item: String,
+}
+
+impl AsJson for FetchReq {}
+
+// Fetch information request format
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
+pub struct FetchRes {
+    pub item: String,
+    pub result: Result<serde_json::Value, String>,
+}
+
+impl AsJson for FetchRes {}
+
 // Client -> Server
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
@@ -106,6 +125,8 @@ pub enum PacketType {
     RegisterRes(RegisterRes),
     LoginReq(LoginReq),
     LoginRes(LoginRes),
+    FetchReq(FetchReq),
+    FetchRes(FetchRes),
     Connected(Connected),
     Message(Message),
     Exit(Exit),
@@ -140,6 +161,14 @@ impl PacketType {
                 Some("LoginRes") => {
                     let r: LoginRes = serde_json::from_value(json_value).unwrap();
                     Some(PacketType::LoginRes(r))
+                }
+                Some("FetchReq") => {
+                    let fetch_req: FetchReq = serde_json::from_value(json_value).unwrap();
+                    Some(PacketType::FetchReq(fetch_req))
+                }
+                Some("FetchRes") => {
+                    let fetch_res: FetchRes = serde_json::from_value(json_value).unwrap();
+                    Some(PacketType::FetchRes(fetch_res))
                 }
                 Some("Message") => {
                     let m: Message = serde_json::from_value(json_value).unwrap();

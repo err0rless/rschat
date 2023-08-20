@@ -1,18 +1,25 @@
+// Request specific type of information from server
+pub enum Fetch {
+    UserList,
+    None,
+}
+
 pub enum Command {
     Help,
     Get(String),
     Register,
     Login(Option<String>),
+    Fetch(Fetch),
     Exit,
 }
 
 impl Command {
     pub fn from_str(s: &str) -> Option<Command> {
-        let cmdline = s.trim_end();
-        if !cmdline.starts_with('/') {
+        if !s.starts_with('/') {
             return None;
         }
 
+        let cmdline = s.trim_end();
         let command = if let Some(idx) = cmdline.find(' ') {
             &cmdline[1..idx]
         } else {
@@ -37,6 +44,12 @@ impl Command {
                     None
                 }
             }
+            "fetch" => Some(Command::Fetch(
+                match cmdline.find(' ').map(|idx| cmdline[idx + 1..].trim()) {
+                    Some("list") => Fetch::UserList,
+                    _ => Fetch::None,
+                },
+            )),
             cmd => {
                 println!("Unknown command: '{}'", cmd);
                 None

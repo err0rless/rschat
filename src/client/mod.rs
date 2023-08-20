@@ -137,6 +137,40 @@ async fn handle_command(
                 Err(s) => println!("[#System:Login] Failure: '{}'", s),
             };
         }
+        Some(Command::Fetch(fetch)) => {
+            let item_str = match fetch {
+                Fetch::UserList => "list",
+                _ => {
+                    println!("[fetch] Unhandled fetch item");
+                    return false;
+                }
+            };
+
+            if let Err(e) = outgoing_tx
+                .send(
+                    FetchReq {
+                        item: item_str.to_owned(),
+                    }
+                    .as_json_string(),
+                )
+                .await
+            {
+                println!("[fetch] Channel send failed, try again: '{}'", e);
+                return false;
+            }
+
+            // block til Login response
+            let fetch_res = consume_til::<FetchRes>(incoming_tx.subscribe()).await;
+            match fetch_res.item.as_str() {
+                "list" => {
+                    _ = fetch_res
+                        .result
+                        .map(|v| println!("{}", serde_json::to_string_pretty(&v).unwrap()))
+                        .map_err(|e| println!("{}", e));
+                }
+                unknown => println!("[#System:Fetch] unknown item: '{}'", unknown),
+            };
+        }
         Some(Command::Exit) => {
             println!(" >> See you soon <<");
             _ = outgoing_tx.send(Exit {}.as_json_string()).await;
