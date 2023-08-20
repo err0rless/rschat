@@ -19,6 +19,7 @@ fn get_mark(id: &str) -> char {
     }
 }
 
+/// receive formatted packets from `rd` and enqueue them to `incoming_tx` channel
 async fn produce_incomings(mut rd: ReadHalf<TcpStream>, incoming_tx: broadcast::Sender<String>) {
     loop {
         // Size header
@@ -39,7 +40,8 @@ async fn produce_incomings(mut rd: ReadHalf<TcpStream>, incoming_tx: broadcast::
     }
 }
 
-async fn handle_incoming_message(mut incoming_rx: broadcast::Receiver<String>) {
+/// handle message packets
+async fn print_message_packets(mut incoming_rx: broadcast::Receiver<String>) {
     loop {
         if let Ok(msg_str) = incoming_rx.recv().await {
             match serde_json::from_str::<Message>(msg_str.as_str()) {
@@ -227,15 +229,17 @@ async fn chat_interface(
     }
 }
 
-// Consumes broadcast channel until encounter the packet type: `T`
-async fn consume_til<T>(mut incoming_rx: broadcast::Receiver<String>) -> T
+/// Consumes broadcast channel until encounter the packet type: `T`
+///
+/// Make sure no same type of request between request and consume_til.
+async fn consume_til<P>(mut incoming_rx: broadcast::Receiver<String>) -> P
 where
-    T: serde::de::DeserializeOwned,
+    P: serde::de::DeserializeOwned,
 {
     loop {
         if let Ok(msg) = incoming_rx.recv().await {
             let j: serde_json::Value = serde_json::from_str(msg.as_str()).unwrap();
-            if let Ok(res) = serde_json::from_value::<T>(j) {
+            if let Ok(res) = serde_json::from_value::<P>(j) {
                 break res;
             }
         }
@@ -266,7 +270,7 @@ pub async fn run_client(port: String) -> Result<(), Box<dyn std::error::Error>> 
     tokio::task::spawn(produce_incomings(rd, incoming_tx.clone()));
 
     // Task for receiving broadcast messages from server
-    tokio::task::spawn(handle_incoming_message(incoming_tx.subscribe()));
+    tokio::task::spawn(print_message_packets(incoming_tx.subscribe()));
 
     // Try joining as a guest
     let id = {
@@ -289,10 +293,7 @@ pub async fn run_client(port: String) -> Result<(), Box<dyn std::error::Error>> 
         }
     };
 
-    let state = session::State {
-        is_guest: true,
-        id: id.clone(),
-    };
+    let state = session::State { is_guest: true, id };
 
     // Shell-like interface for chat client
     tokio::task::spawn(chat_interface(

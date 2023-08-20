@@ -3,24 +3,6 @@ use serde_json::Value;
 
 use crate::db;
 
-pub trait AsJson {
-    fn as_json_string(&self) -> String
-    where
-        Self: Serialize,
-    {
-        serde_json::to_string(&self).unwrap()
-    }
-
-    fn as_json_bytes(&self) -> Vec<u8>
-    where
-        Self: Serialize,
-    {
-        serde_json::to_vec(&self).unwrap()
-    }
-}
-
-impl AsJson for serde_json::Value {}
-
 // Client -> Server -> Other clients
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
@@ -48,16 +30,12 @@ impl Message {
     }
 }
 
-impl AsJson for Message {}
-
 // request format for registration
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub struct RegisterReq {
     pub user: db::user::User,
 }
-
-impl AsJson for RegisterReq {}
 
 // response format for registration
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -66,16 +44,12 @@ pub struct RegisterRes {
     pub result: Result<(), String>,
 }
 
-impl AsJson for RegisterRes {}
-
 // request format for login
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub struct LoginReq {
     pub login_info: db::user::Login,
 }
-
-impl AsJson for LoginReq {}
 
 // response format for login
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -84,16 +58,12 @@ pub struct LoginRes {
     pub result: Result<String /* id */, String>,
 }
 
-impl AsJson for LoginRes {}
-
 // Fetch information request format
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub struct FetchReq {
     pub item: String,
 }
-
-impl AsJson for FetchReq {}
 
 // Fetch information request format
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -103,20 +73,41 @@ pub struct FetchRes {
     pub result: Result<serde_json::Value, String>,
 }
 
-impl AsJson for FetchRes {}
-
 // Client -> Server
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub struct Connected {}
-
-impl AsJson for Connected {}
 
 // Client -> Server
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub struct Exit {}
 
+pub trait AsJson {
+    fn as_json_string(&self) -> String
+    where
+        Self: Serialize,
+    {
+        serde_json::to_string(&self).unwrap()
+    }
+
+    fn as_json_bytes(&self) -> Vec<u8>
+    where
+        Self: Serialize,
+    {
+        serde_json::to_vec(&self).unwrap()
+    }
+}
+
+impl AsJson for serde_json::Value {}
+impl AsJson for Message {}
+impl AsJson for RegisterReq {}
+impl AsJson for RegisterRes {}
+impl AsJson for LoginReq {}
+impl AsJson for LoginRes {}
+impl AsJson for FetchReq {}
+impl AsJson for FetchRes {}
+impl AsJson for Connected {}
 impl AsJson for Exit {}
 
 #[derive(Clone)]
