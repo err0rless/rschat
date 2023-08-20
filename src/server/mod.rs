@@ -178,6 +178,7 @@ async fn session_task(
                             if res.is_ok() {
                                 lock.num_guest -= 1; // every connection is a guest at first
                                 lock.num_user += 1;
+                                lock.names.remove(id.lock().unwrap().as_str());
                                 lock.names.insert(req.login_info.id.clone().unwrap());
 
                                 _ = msg_tx.send(PacketType::Message(Message::connection(
