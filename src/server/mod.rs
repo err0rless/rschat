@@ -41,10 +41,10 @@ async fn channel_consumer(
                     }
 
                     // Skip message from the current client handler
-                    if let Ok(lock) = id.lock() {
-                        if lock.as_str() == msg.id {
-                            continue;
-                        }
+                    match id.lock() {
+                        Ok(lock) if lock.as_str() == msg.id => continue,
+                        Err(_) => continue,
+                        Ok(_) => (),
                     }
 
                     // Write message to the stream

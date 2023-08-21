@@ -3,13 +3,63 @@ use serde_json::Value;
 
 use crate::db;
 
+// macro for packet declarations
+macro_rules! packet_declarations {
+    ($($item:item) *) => {
+        $(
+            #[derive(Serialize, Deserialize, Debug, Clone)]
+            #[serde(tag = "type")]
+            $item
+        )*
+    }
+}
+
+packet_declarations! {
+
 // Client -> Server -> Other clients
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
 pub struct Message {
     pub id: String,
     pub msg: String,
     pub is_system: bool,
+}
+
+// request format for registration
+pub struct RegisterReq {
+    pub user: db::user::User,
+}
+
+// response format for registration
+pub struct RegisterRes {
+    pub result: Result<(), String>,
+}
+
+// request format for login
+pub struct LoginReq {
+    pub login_info: db::user::Login,
+}
+
+// response format for login
+pub struct LoginRes {
+    pub result: Result<String /* id */, String>,
+}
+
+// Fetch information request format
+pub struct FetchReq {
+    pub item: String,
+}
+
+// Fetch information request format
+pub struct FetchRes {
+    pub item: String,
+    pub result: Result<serde_json::Value, String>,
+}
+
+// notify that a new client has connected
+pub struct Connected {}
+
+// notify that a client has disconnected
+pub struct Exit {}
+
 }
 
 impl Message {
@@ -29,59 +79,6 @@ impl Message {
         }
     }
 }
-
-// request format for registration
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
-pub struct RegisterReq {
-    pub user: db::user::User,
-}
-
-// response format for registration
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
-pub struct RegisterRes {
-    pub result: Result<(), String>,
-}
-
-// request format for login
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
-pub struct LoginReq {
-    pub login_info: db::user::Login,
-}
-
-// response format for login
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
-pub struct LoginRes {
-    pub result: Result<String /* id */, String>,
-}
-
-// Fetch information request format
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
-pub struct FetchReq {
-    pub item: String,
-}
-
-// Fetch information request format
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
-pub struct FetchRes {
-    pub item: String,
-    pub result: Result<serde_json::Value, String>,
-}
-
-// Client -> Server
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
-pub struct Connected {}
-
-// Client -> Server
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
-pub struct Exit {}
 
 pub trait AsJson {
     fn as_json_string(&self) -> String
@@ -135,46 +132,47 @@ impl PacketType {
             None => return None,
         };
 
-        if let Some(packet_type) = map.get("type") {
-            match packet_type.as_str() {
-                Some("RegisterReq") => {
-                    let r: RegisterReq = serde_json::from_value(json_value).unwrap();
-                    Some(PacketType::RegisterReq(r))
-                }
-                Some("RegisterRes") => {
-                    let r: RegisterRes = serde_json::from_value(json_value).unwrap();
-                    Some(PacketType::RegisterRes(r))
-                }
-                Some("LoginReq") => {
-                    let r: LoginReq = serde_json::from_value(json_value).unwrap();
-                    Some(PacketType::LoginReq(r))
-                }
-                Some("LoginRes") => {
-                    let r: LoginRes = serde_json::from_value(json_value).unwrap();
-                    Some(PacketType::LoginRes(r))
-                }
-                Some("FetchReq") => {
-                    let fetch_req: FetchReq = serde_json::from_value(json_value).unwrap();
-                    Some(PacketType::FetchReq(fetch_req))
-                }
-                Some("FetchRes") => {
-                    let fetch_res: FetchRes = serde_json::from_value(json_value).unwrap();
-                    Some(PacketType::FetchRes(fetch_res))
-                }
-                Some("Message") => {
-                    let m: Message = serde_json::from_value(json_value).unwrap();
-                    Some(PacketType::Message(m))
-                }
-                Some("Connected") => Some(PacketType::Connected(Connected {})),
-                Some("Exit") => Some(PacketType::Exit(Exit {})),
-                Some(unknown_type) => {
-                    println!("[!] Unknown packet type: {}", unknown_type);
-                    None
-                }
-                None => None,
+        let packet_type = match map.get("type") {
+            Some(pt) => pt,
+            None => return None,
+        };
+
+        match packet_type.as_str() {
+            Some("RegisterReq") => {
+                let r: RegisterReq = serde_json::from_value(json_value).unwrap();
+                Some(PacketType::RegisterReq(r))
             }
-        } else {
-            None
+            Some("RegisterRes") => {
+                let r: RegisterRes = serde_json::from_value(json_value).unwrap();
+                Some(PacketType::RegisterRes(r))
+            }
+            Some("LoginReq") => {
+                let r: LoginReq = serde_json::from_value(json_value).unwrap();
+                Some(PacketType::LoginReq(r))
+            }
+            Some("LoginRes") => {
+                let r: LoginRes = serde_json::from_value(json_value).unwrap();
+                Some(PacketType::LoginRes(r))
+            }
+            Some("FetchReq") => {
+                let fetch_req: FetchReq = serde_json::from_value(json_value).unwrap();
+                Some(PacketType::FetchReq(fetch_req))
+            }
+            Some("FetchRes") => {
+                let fetch_res: FetchRes = serde_json::from_value(json_value).unwrap();
+                Some(PacketType::FetchRes(fetch_res))
+            }
+            Some("Message") => {
+                let m: Message = serde_json::from_value(json_value).unwrap();
+                Some(PacketType::Message(m))
+            }
+            Some("Connected") => Some(PacketType::Connected(Connected {})),
+            Some("Exit") => Some(PacketType::Exit(Exit {})),
+            Some(unknown_type) => {
+                println!("[!] Unknown packet type: {}", unknown_type);
+                None
+            }
+            None => None,
         }
     }
 }
