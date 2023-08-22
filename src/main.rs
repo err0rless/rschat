@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // port number
     let port = std::env::args()
         .nth(2)
-        .unwrap_or(String::from(DEFAULT_PORT_NUM));
+        .unwrap_or(DEFAULT_PORT_NUM.to_owned());
 
     // run the target
     match target.as_deref() {

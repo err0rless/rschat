@@ -44,7 +44,7 @@ impl User {
         let loc = async_read_line().await;
 
         if id.is_empty() || password.is_empty() {
-            print_flush("id or password is empty!");
+            println!("id or password is empty!");
             None
         } else {
             Some(Self {
