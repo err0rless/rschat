@@ -43,12 +43,15 @@ async fn produce_incomings(mut rd: ReadHalf<TcpStream>, incoming_tx: broadcast::
 /// handle message packets
 async fn print_message_packets(mut incoming_rx: broadcast::Receiver<String>) {
     loop {
-        if let Ok(msg_str) = incoming_rx.recv().await {
-            match serde_json::from_str::<Message>(msg_str.as_str()) {
-                Ok(msg) if msg.is_system => println!("[#System] {}", msg.msg),
-                Ok(msg) => println!("{}{}: {}", get_mark(&msg.id), msg.id, msg.msg),
-                _ => (),
-            }
+        let msg_str = match incoming_rx.recv().await {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        match serde_json::from_str::<Message>(msg_str.as_str()) {
+            Ok(msg) if msg.is_system => println!("[#System] {}", msg.msg),
+            Ok(msg) => println!("{}{}: {}", get_mark(&msg.id), msg.id, msg.msg),
+            _ => (),
         }
     }
 }

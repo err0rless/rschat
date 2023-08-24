@@ -10,21 +10,26 @@ use crate::packet::*;
 
 pub mod session;
 
-/// Write `packet` to the TCP stream with size header
-async fn send_sized_msg<P>(wr: &mut WriteHalf<TcpStream>, packet: P)
-where
-    P: AsJson + serde::Serialize,
-{
-    // super simple message protocol [Size: u32][Message: String]
-    let packet_bytes = packet.as_json_bytes();
-    _ = wr.write_u32(packet_bytes.len() as u32).await;
-    _ = wr.write_all(&packet_bytes).await;
+/// write `bytes` to the TCP stream with size header
+async fn send_sized_bytes(wr: &mut WriteHalf<TcpStream>, bytes: &[u8]) {
+    // super simple message protocol [Size: u32][Message: bytes]
+    _ = wr.write_u32(bytes.len() as u32).await;
+    _ = wr.write_all(bytes).await;
+}
+
+/// Consume the messages from `sock_rx` channel and write them to `wr` directly
+async fn stream_sender(mut wr: WriteHalf<TcpStream>, mut sock_rx: mpsc::Receiver<Vec<u8>>) {
+    loop {
+        if let Some(bytes) = sock_rx.recv().await {
+            _ = send_sized_bytes(&mut wr, bytes.as_slice()).await;
+        }
+    }
 }
 
 async fn channel_consumer(
     mut msg_rx: broadcast::Receiver<PacketType>,
     mut res_rx: mpsc::Receiver<PacketType>,
-    mut wr: WriteHalf<TcpStream>,
+    sock_tx: mpsc::Sender<Vec<u8>>,
     id: Arc<Mutex<String>>,
 ) {
     let connected = AtomicBool::new(false);
@@ -48,9 +53,7 @@ async fn channel_consumer(
                     }
 
                     // Write message to the stream
-                    if let Ok(msg_json) = serde_json::to_value(msg) {
-                        send_sized_msg(&mut wr, msg_json).await;
-                    }
+                    _ = sock_tx.send(msg.as_json_bytes()).await;
                 }
                 Ok(PacketType::Connected(_)) => {
                     connected.store(true, Ordering::Relaxed);
@@ -63,7 +66,7 @@ async fn channel_consumer(
             // be sent to this channel
             res = res_rx.recv() => match res {
                 Some(PacketType::RegisterRes(r)) => {
-                    send_sized_msg(&mut wr, r).await;
+                    _ = sock_tx.send(r.as_json_bytes()).await;
                 }
                 Some(PacketType::LoginRes(mut r)) => {
                     // Login was successful, update the id
@@ -76,10 +79,10 @@ async fn channel_consumer(
                         // somehow failed to lock the id
                         r.result = Err("failed to login".to_owned());
                     }
-                    send_sized_msg(&mut wr, r).await;
+                    _ = sock_tx.send(r.as_json_bytes()).await;
                 }
                 Some(PacketType::FetchRes(r)) => {
-                    send_sized_msg(&mut wr, r).await;
+                    _ = sock_tx.send(r.as_json_bytes()).await;
                 }
                 _ => continue,
             },
@@ -107,10 +110,19 @@ async fn session_task(
     // to only current client
     let (res_tx, res_rx) = mpsc::channel::<PacketType>(32);
 
+    // Channel for consuming and send to the TCP stream
+    let (sock_tx, sock_rx) = mpsc::channel::<Vec<u8>>(32);
+    tokio::task::spawn(stream_sender(wr, sock_rx));
+
     // Channel consumer: consumes the messages from the channels and handle them
     //  - msg_rx: broadcast channel
     //  - res_rx: mpsc channel
-    tokio::task::spawn(channel_consumer(msg_rx, res_rx, wr, id.clone()));
+    tokio::task::spawn(channel_consumer(
+        msg_rx,
+        res_rx,
+        sock_tx.clone(),
+        id.clone(),
+    ));
 
     let mut buf = [0; 1024];
     loop {
