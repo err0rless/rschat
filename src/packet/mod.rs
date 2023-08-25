@@ -142,7 +142,7 @@ impl PacketType {
             None => return None,
         };
 
-        macro_rules! packet_as_str {
+        macro_rules! packet_from_str {
             ($packet:ident) => {{
                 let r: $packet = serde_json::from_value(json_value).unwrap();
                 Some(PacketType::$packet(r))
@@ -150,15 +150,15 @@ impl PacketType {
         }
 
         match packet_type.as_str() {
-            Some("RegisterReq") => packet_as_str!(RegisterReq),
-            Some("RegisterRes") => packet_as_str!(RegisterRes),
-            Some("LoginReq") => packet_as_str!(LoginReq),
-            Some("LoginRes") => packet_as_str!(LoginRes),
-            Some("FetchReq") => packet_as_str!(FetchReq),
-            Some("FetchRes") => packet_as_str!(FetchRes),
-            Some("GotoReq") => packet_as_str!(GotoReq),
-            Some("GotoRes") => packet_as_str!(GotoRes),
-            Some("Message") => packet_as_str!(Message),
+            Some("RegisterReq") => packet_from_str!(RegisterReq),
+            Some("RegisterRes") => packet_from_str!(RegisterRes),
+            Some("LoginReq") => packet_from_str!(LoginReq),
+            Some("LoginRes") => packet_from_str!(LoginRes),
+            Some("FetchReq") => packet_from_str!(FetchReq),
+            Some("FetchRes") => packet_from_str!(FetchRes),
+            Some("GotoReq") => packet_from_str!(GotoReq),
+            Some("GotoRes") => packet_from_str!(GotoRes),
+            Some("Message") => packet_from_str!(Message),
             Some("Connected") => Some(PacketType::Connected(Connected {})),
             Some("Exit") => Some(PacketType::Exit(Exit {})),
             Some(unknown_type) => {
