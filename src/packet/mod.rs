@@ -142,43 +142,23 @@ impl PacketType {
             None => return None,
         };
 
+        macro_rules! packet_as_str {
+            ($packet:ident) => {{
+                let r: $packet = serde_json::from_value(json_value).unwrap();
+                Some(PacketType::$packet(r))
+            }};
+        }
+
         match packet_type.as_str() {
-            Some("RegisterReq") => {
-                let r: RegisterReq = serde_json::from_value(json_value).unwrap();
-                Some(PacketType::RegisterReq(r))
-            }
-            Some("RegisterRes") => {
-                let r: RegisterRes = serde_json::from_value(json_value).unwrap();
-                Some(PacketType::RegisterRes(r))
-            }
-            Some("LoginReq") => {
-                let r: LoginReq = serde_json::from_value(json_value).unwrap();
-                Some(PacketType::LoginReq(r))
-            }
-            Some("LoginRes") => {
-                let r: LoginRes = serde_json::from_value(json_value).unwrap();
-                Some(PacketType::LoginRes(r))
-            }
-            Some("FetchReq") => {
-                let fetch_req: FetchReq = serde_json::from_value(json_value).unwrap();
-                Some(PacketType::FetchReq(fetch_req))
-            }
-            Some("FetchRes") => {
-                let fetch_res: FetchRes = serde_json::from_value(json_value).unwrap();
-                Some(PacketType::FetchRes(fetch_res))
-            }
-            Some("GotoReq") => {
-                let goto_req: GotoReq = serde_json::from_value(json_value).unwrap();
-                Some(PacketType::GotoReq(goto_req))
-            }
-            Some("GotoRes") => {
-                let goto_res: GotoRes = serde_json::from_value(json_value).unwrap();
-                Some(PacketType::GotoRes(goto_res))
-            }
-            Some("Message") => {
-                let m: Message = serde_json::from_value(json_value).unwrap();
-                Some(PacketType::Message(m))
-            }
+            Some("RegisterReq") => packet_as_str!(RegisterReq),
+            Some("RegisterRes") => packet_as_str!(RegisterRes),
+            Some("LoginReq") => packet_as_str!(LoginReq),
+            Some("LoginRes") => packet_as_str!(LoginRes),
+            Some("FetchReq") => packet_as_str!(FetchReq),
+            Some("FetchRes") => packet_as_str!(FetchRes),
+            Some("GotoReq") => packet_as_str!(GotoReq),
+            Some("GotoRes") => packet_as_str!(GotoRes),
+            Some("Message") => packet_as_str!(Message),
             Some("Connected") => Some(PacketType::Connected(Connected {})),
             Some("Exit") => Some(PacketType::Exit(Exit {})),
             Some(unknown_type) => {
