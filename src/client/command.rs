@@ -10,6 +10,7 @@ pub enum Command {
     Register,
     Login(Option<String>),
     Fetch(Fetch),
+    Goto(String),
     Exit,
 }
 
@@ -50,6 +51,13 @@ impl Command {
                     _ => Fetch::None,
                 },
             )),
+            "goto" => match cmdline.find(' ') {
+                Some(idx) => Some(Command::Goto(String::from(cmdline[idx + 1..].trim()))),
+                None => {
+                    println!("[#SystemError] Command 'goto' requires an argument: [channel_name]");
+                    None
+                }
+            },
             cmd => {
                 println!("Unknown command: '{}'", cmd);
                 None
@@ -63,6 +71,7 @@ impl Command {
         println!(" | /register: register a new member");
         println!(" | /login <optional:id>: log in");
         println!(" | /get [required:key]: get information");
+        println!(" | /goto [required:channel]: goto channel");
         println!(" | /exit: exit from chat");
     }
 }

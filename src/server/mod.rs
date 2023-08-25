@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 use rand::prelude::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
+use tokio_util::sync::CancellationToken;
 
 use crate::packet::*;
 
@@ -17,7 +18,7 @@ async fn send_sized_bytes(wr: &mut WriteHalf<TcpStream>, bytes: &[u8]) {
     _ = wr.write_all(bytes).await;
 }
 
-/// Consume the messages from `sock_rx` channel and write them to `wr` directly
+/// Consume messages from `sock_rx` channel and write them to `wr` directly
 async fn stream_sender(mut wr: WriteHalf<TcpStream>, mut sock_rx: mpsc::Receiver<Vec<u8>>) {
     loop {
         if let Some(bytes) = sock_rx.recv().await {
@@ -26,19 +27,23 @@ async fn stream_sender(mut wr: WriteHalf<TcpStream>, mut sock_rx: mpsc::Receiver
     }
 }
 
-async fn channel_consumer(
-    mut msg_rx: broadcast::Receiver<PacketType>,
-    mut res_rx: mpsc::Receiver<PacketType>,
+/// Consumer for the channel `msg_rx`
+///
+/// This task can be gracefully terminated by notifying the `cancel_token`.
+async fn message_handler(
+    mut channel_tx: broadcast::Receiver<PacketType>,
     sock_tx: mpsc::Sender<Vec<u8>>,
+    cancel_token: CancellationToken,
     id: Arc<Mutex<String>>,
 ) {
     let connected = AtomicBool::new(false);
     loop {
         tokio::select! {
-            // Handling broadcasting packets
-            //
-            // Packets queued on this channel can be sent to any subscriber
-            msg = msg_rx.recv() => match msg {
+            // Client left this channel, terminate this task gracefully
+            _ = cancel_token.cancelled() => {
+                break
+            }
+            message = channel_tx.recv() => match message {
                 Ok(PacketType::Message(msg)) => {
                     // Client hasn't connected successfully yet
                     if !connected.load(Ordering::Relaxed) {
@@ -59,33 +64,40 @@ async fn channel_consumer(
                     connected.store(true, Ordering::Relaxed);
                 }
                 _ => continue,
-            },
-            // Handling packets that will be sent to current client
-            //
-            // Any one-on-one comminucation between client and server such as request/response should
-            // be sent to this channel
-            res = res_rx.recv() => match res {
-                Some(PacketType::RegisterRes(r)) => {
-                    _ = sock_tx.send(r.as_json_bytes()).await;
-                }
-                Some(PacketType::LoginRes(mut r)) => {
-                    // Login was successful, update the id
-                    if let Ok(mut lock) = id.lock() {
-                        if let Ok(login_id) = &r.result {
-                            connected.store(true, Ordering::Relaxed);
-                            *lock = login_id.clone();
-                        }
-                    } else if r.result.is_ok() {
-                        // somehow failed to lock the id
-                        r.result = Err("failed to login".to_owned());
+            }
+        }
+    }
+}
+
+async fn response_handler(
+    mut res_rx: mpsc::Receiver<PacketType>,
+    sock_tx: mpsc::Sender<Vec<u8>>,
+    id: Arc<Mutex<String>>,
+) {
+    loop {
+        match res_rx.recv().await {
+            Some(PacketType::RegisterRes(r)) => {
+                _ = sock_tx.send(r.as_json_bytes()).await;
+            }
+            Some(PacketType::LoginRes(mut r)) => {
+                // Login was successful, update the id
+                if let Ok(mut lock) = id.lock() {
+                    if let Ok(login_id) = &r.result {
+                        *lock = login_id.clone();
                     }
-                    _ = sock_tx.send(r.as_json_bytes()).await;
+                } else if r.result.is_ok() {
+                    // somehow failed to lock the id
+                    r.result = Err("failed to login".to_owned());
                 }
-                Some(PacketType::FetchRes(r)) => {
-                    _ = sock_tx.send(r.as_json_bytes()).await;
-                }
-                _ => continue,
-            },
+                _ = sock_tx.send(r.as_json_bytes()).await;
+            }
+            Some(PacketType::FetchRes(r)) => {
+                _ = sock_tx.send(r.as_json_bytes()).await;
+            }
+            Some(PacketType::GotoRes(r)) => {
+                _ = sock_tx.send(r.as_json_bytes()).await;
+            }
+            _ => (),
         }
     }
 }
@@ -93,8 +105,8 @@ async fn channel_consumer(
 // Handler for each connection
 async fn session_task(
     stream: TcpStream,
-    msg_tx: broadcast::Sender<PacketType>,
     state: Arc<Mutex<session::State>>,
+    channels: Arc<AsyncMutex<session::Channels>>,
     sqlconn: Arc<Mutex<rusqlite::Connection>>,
 ) {
     // Split into two unidirectional stream
@@ -103,24 +115,29 @@ async fn session_task(
     // Thread-safe id container
     let id = Arc::new(Mutex::new(String::new()));
 
-    // Subscribe the broadcast channel
-    let msg_rx = msg_tx.subscribe();
-
-    // Channel for sending response back to client, or any type of packet that needs to be sent
-    // to only current client
-    let (res_tx, res_rx) = mpsc::channel::<PacketType>(32);
-
     // Channel for consuming and send to the TCP stream
     let (sock_tx, sock_rx) = mpsc::channel::<Vec<u8>>(32);
     tokio::task::spawn(stream_sender(wr, sock_rx));
 
-    // Channel consumer: consumes the messages from the channels and handle them
-    //  - msg_rx: broadcast channel
-    //  - res_rx: mpsc channel
-    tokio::task::spawn(channel_consumer(
-        msg_rx,
-        res_rx,
+    // Channel for sending response back to client, or any type of packet that needs to be sent
+    // to only current client
+    let (res_tx, res_rx) = mpsc::channel::<PacketType>(32);
+    tokio::task::spawn(response_handler(res_rx, sock_tx.clone(), id.clone()));
+
+    // default meessage channel
+    let mut channel_tx = channels
+        .lock()
+        .await
+        .get_channel(session::DEFAULT_CHANNEL)
+        .expect("Failed to get default channel");
+
+    // Default channel broadcasting task, notify `cancel_token` to terminate this task gracefully
+    // so current client can connect to other chatting channel
+    let mut cancel_token = CancellationToken::new();
+    tokio::task::spawn(message_handler(
+        channel_tx.subscribe(),
         sock_tx.clone(),
+        cancel_token.clone(),
         id.clone(),
     ));
 
@@ -195,28 +212,30 @@ async fn session_task(
                                 lock.num_user += 1;
                                 lock.names.remove(id.lock().unwrap().as_str());
                                 lock.names.insert(req.login_info.id.clone().unwrap());
-
-                                _ = msg_tx.send(PacketType::Message(Message::connection(
-                                    &req.login_info.id.unwrap(),
-                                )));
                             }
                             res
                         }
                     },
                 };
+                // Send packets in case login was successful
+                if res.result.is_ok() {
+                    _ = channel_tx.send(PacketType::Message(Message::connection(
+                        &res.clone().result.unwrap(),
+                    )));
+                    _ = channel_tx.send(PacketType::Connected(Connected {}));
+                }
                 _ = res_tx.send(PacketType::LoginRes(res)).await;
             }
             Some(PacketType::FetchReq(fetch)) => {
                 let fetch_res = match fetch.item.as_str() {
                     "list" => {
-                        let info = if let Ok(lock) = state.lock() {
-                            (
+                        let info = match state.lock() {
+                            Ok(lock) => (
                                 lock.names.iter().map(String::from).collect::<Vec<String>>(),
                                 lock.num_user,
                                 lock.num_guest,
-                            )
-                        } else {
-                            continue;
+                            ),
+                            _ => continue,
                         };
 
                         FetchRes {
@@ -236,10 +255,41 @@ async fn session_task(
                 };
                 _ = res_tx.send(PacketType::FetchRes(fetch_res)).await;
             }
+            Some(PacketType::GotoReq(req)) => {
+                let packet = PacketType::GotoRes(GotoRes {
+                    result: match channels.lock().await.get_channel(req.channel_name.as_str()) {
+                        Some(sender) => {
+                            // notify the existing task for graceful termination
+                            cancel_token.cancel();
+
+                            // new token for upcoming task!
+                            cancel_token = CancellationToken::new();
+
+                            // new broadcasting channel
+                            channel_tx = sender.clone();
+
+                            // spawn a new task for this channel
+                            tokio::task::spawn(message_handler(
+                                sender.subscribe(),
+                                sock_tx.clone(),
+                                cancel_token.clone(),
+                                id.clone(),
+                            ));
+                            _ = channel_tx.send(PacketType::Connected(Connected {}));
+                            Ok(req.channel_name)
+                        }
+                        None => Err("Invalid or not permitted to join the channel".to_owned()),
+                    },
+                });
+                if let Err(e) = res_tx.send(packet).await {
+                    // Somehow failed to send
+                    println!("{}", e);
+                }
+            }
             // Received a request to broadcast message
             Some(PacketType::Message(msg)) => {
                 // Send message to the channel for broadcasting to connected clients
-                _ = msg_tx.send(PacketType::Message(msg));
+                _ = channel_tx.send(PacketType::Message(msg));
             }
             // Received exit notification from client, remove the client from current session
             Some(PacketType::Exit(_)) => {
@@ -256,7 +306,7 @@ async fn session_task(
                     s.names.remove(lock.as_str());
 
                     // disconnection broadcasting
-                    _ = msg_tx.send(PacketType::Message(Message::disconnection(&lock.clone())));
+                    _ = channel_tx.send(PacketType::Message(Message::disconnection(&lock.clone())));
                 }
                 return;
             }
@@ -275,9 +325,6 @@ pub async fn run_server(port: String) -> Result<(), Box<dyn std::error::Error>> 
         Err(e) => panic!("{}", e),
     };
 
-    // Channel for broadcasting messages to subscribers
-    let (msg_tx, _) = broadcast::channel::<PacketType>(32);
-
     // Session state
     let state = Arc::new(Mutex::new(session::State {
         names: std::collections::HashSet::new(),
@@ -285,42 +332,46 @@ pub async fn run_server(port: String) -> Result<(), Box<dyn std::error::Error>> 
         num_guest: 0,
     }));
 
+    // Chatting channel list
+    let channels = Arc::new(AsyncMutex::new(session::Channels::with_system_channels()));
+
     // In-memory sqlite instance
     let sqlconn = Arc::new(Mutex::new(rusqlite::Connection::open_in_memory()?));
 
     // Create essential tables / columns
-    if let Ok(lock) = sqlconn.lock() {
-        lock.execute_batch(
-            "BEGIN;
-            CREATE TABLE user (
-                id          TEXT PRIMARY KEY,
-                password    TEXT NOT NULL,
-                bio         TEXT,
-                location    TEXT
-            );
-            INSERT INTO user (
-                id, password, bio, location
-            ) VALUES (
-                'root',
-                'alpine',
-                'root account',
-                ''
-            );
-            COMMIT;
-        ",
-        )
-        .unwrap();
-    } else {
-        panic!("failed to create a table");
-    }
+    sqlconn
+        .lock()
+        .map(|lock| {
+            lock.execute_batch(
+                "BEGIN;
+                CREATE TABLE user (
+                    id          TEXT PRIMARY KEY,
+                    password    TEXT NOT NULL,
+                    bio         TEXT,
+                    location    TEXT
+                );
+                INSERT INTO user (
+                    id, password, bio, location
+                ) VALUES (
+                    'root',
+                    'alpine',
+                    'root account',
+                    ''
+                );
+                COMMIT;
+            ",
+            )
+            .expect("failed to create an essential table")
+        })
+        .expect("somehow failed to lock sqlconn");
 
     // We're good to go
     while let Ok(s) = listener.accept().await {
         println!("New connection from: {:?}", s.0);
         tokio::spawn(session_task(
             s.0,
-            msg_tx.clone(),
             state.clone(),
+            channels.clone(),
             sqlconn.clone(),
         ));
     }

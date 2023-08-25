@@ -16,42 +16,43 @@ macro_rules! packet_declarations {
 
 packet_declarations! {
 
-// Client -> Server -> Other clients
 pub struct Message {
     pub id: String,
     pub msg: String,
     pub is_system: bool,
 }
 
-// request format for registration
 pub struct RegisterReq {
     pub user: db::user::User,
 }
 
-// response format for registration
 pub struct RegisterRes {
     pub result: Result<(), String>,
 }
 
-// request format for login
 pub struct LoginReq {
     pub login_info: db::user::Login,
 }
 
-// response format for login
 pub struct LoginRes {
     pub result: Result<String /* id */, String>,
 }
 
-// Fetch information request format
 pub struct FetchReq {
     pub item: String,
 }
 
-// Fetch information request format
 pub struct FetchRes {
     pub item: String,
     pub result: Result<serde_json::Value, String>,
+}
+
+pub struct GotoReq {
+    pub channel_name: String,
+}
+
+pub struct GotoRes {
+    pub result: Result<String, String>,
 }
 
 // notify that a new client has connected
@@ -63,17 +64,17 @@ pub struct Exit {}
 }
 
 impl Message {
-    pub fn connection(id: &String) -> Self {
+    pub fn connection(id: &str) -> Self {
         Self {
-            id: id.clone(),
+            id: id.to_owned(),
             msg: format!("'{}' has joined", id),
             is_system: true,
         }
     }
 
-    pub fn disconnection(id: &String) -> Self {
+    pub fn disconnection(id: &str) -> Self {
         Self {
-            id: id.clone(),
+            id: id.to_owned(),
             msg: format!("'{}' has left", id),
             is_system: true,
         }
@@ -104,10 +105,12 @@ impl AsJson for LoginReq {}
 impl AsJson for LoginRes {}
 impl AsJson for FetchReq {}
 impl AsJson for FetchRes {}
+impl AsJson for GotoReq {}
+impl AsJson for GotoRes {}
 impl AsJson for Connected {}
 impl AsJson for Exit {}
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum PacketType {
     RegisterReq(RegisterReq),
     RegisterRes(RegisterRes),
@@ -115,6 +118,8 @@ pub enum PacketType {
     LoginRes(LoginRes),
     FetchReq(FetchReq),
     FetchRes(FetchRes),
+    GotoReq(GotoReq),
+    GotoRes(GotoRes),
     Connected(Connected),
     Message(Message),
     Exit(Exit),
@@ -161,6 +166,14 @@ impl PacketType {
             Some("FetchRes") => {
                 let fetch_res: FetchRes = serde_json::from_value(json_value).unwrap();
                 Some(PacketType::FetchRes(fetch_res))
+            }
+            Some("GotoReq") => {
+                let goto_req: GotoReq = serde_json::from_value(json_value).unwrap();
+                Some(PacketType::GotoReq(goto_req))
+            }
+            Some("GotoRes") => {
+                let goto_res: GotoRes = serde_json::from_value(json_value).unwrap();
+                Some(PacketType::GotoRes(goto_res))
             }
             Some("Message") => {
                 let m: Message = serde_json::from_value(json_value).unwrap();

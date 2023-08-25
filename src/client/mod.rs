@@ -176,6 +176,19 @@ async fn handle_command(
                 unknown => println!("[#System:Fetch] unknown item: '{}'", unknown),
             };
         }
+        Some(Command::Goto(channel_name)) => {
+            _ = outgoing_tx
+                .send(GotoReq { channel_name }.as_json_string())
+                .await;
+            match consume_til::<GotoRes>(incoming_tx.subscribe()).await.result {
+                Ok(name) => {
+                    // goto succeeded, change channel
+                    state.channel = name.clone();
+                    println!("[#System:Goto] succeeded to join channel '{}'", name)
+                }
+                Err(e) => println!("[#System:Goto] failed to join channel: '{}'", e),
+            }
+        }
         Some(Command::Exit) => {
             println!(" >> See you soon <<");
             _ = outgoing_tx.send(Exit {}.as_json_string()).await;
@@ -207,7 +220,12 @@ async fn chat_interface(
     mut state: session::State,
 ) {
     loop {
-        print!("You ({}{}) >> ", get_mark(&state.id), state.id,);
+        print!(
+            "You ({}{} in '{}') >> ",
+            get_mark(&state.id),
+            state.id,
+            state.channel
+        );
         std::io::stdout().flush().unwrap();
 
         let mut buf: Vec<u8> = Vec::new();
@@ -257,7 +275,7 @@ pub async fn run_client(port: String) -> Result<(), Box<dyn std::error::Error>> 
     // Establish a connection and split into two unidirectional streams
     let (rd, wr) = match TcpStream::connect(format!("0.0.0.0:{}", port)).await {
         Ok(s) => tokio::io::split(s),
-        Err(e) => panic!("{}'", e),
+        Err(e) => panic!("'{}'", e),
     };
 
     // Channel for messages will be sent to the server
@@ -275,11 +293,11 @@ pub async fn run_client(port: String) -> Result<(), Box<dyn std::error::Error>> 
     // Task for receiving broadcast messages from server
     tokio::task::spawn(print_message_packets(incoming_tx.subscribe()));
 
-    // Try joining as a guest
     let id = {
         outgoing_tx
             .send(
                 LoginReq {
+                    // You are a guest when once join the server
                     login_info: db::user::Login::guest(),
                 }
                 .as_json_string(),
@@ -296,14 +314,26 @@ pub async fn run_client(port: String) -> Result<(), Box<dyn std::error::Error>> 
         }
     };
 
-    let state = session::State { is_guest: true, id };
+    let state = session::State {
+        is_guest: true,
+        id,
+        channel: "public".to_owned(),
+    };
 
     // Shell-like interface for chat client
-    tokio::task::spawn(chat_interface(
+    let main_task = tokio::task::spawn(chat_interface(
         outgoing_tx.clone(),
         incoming_tx.clone(),
         state,
-    ))
-    .await?;
+    ));
+
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            println!("\n >> Program Interrupted (Ctrl+C), See you soon <<");
+            _ = outgoing_tx.send(Exit {}.as_json_string()).await;
+            std::process::exit(-1);
+        }
+        _ = main_task => (),
+    }
     Ok(())
 }
