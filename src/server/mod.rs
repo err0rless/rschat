@@ -105,7 +105,6 @@ async fn response_handler(
 // Handler for each connection
 async fn session_task(
     stream: TcpStream,
-    state: Arc<Mutex<session::State>>,
     channels: Arc<AsyncMutex<session::Channels>>,
     sqlconn: Arc<Mutex<rusqlite::Connection>>,
 ) {
@@ -130,6 +129,9 @@ async fn session_task(
         .await
         .get_channel(session::DEFAULT_CHANNEL)
         .expect("Failed to get default channel");
+
+    // channel name container
+    let mut channel_name: String = session::DEFAULT_CHANNEL.to_owned();
 
     // Default channel broadcasting task, notify `cancel_token` to terminate this task gracefully
     // so current client can connect to other chatting channel
@@ -167,15 +169,14 @@ async fn session_task(
             Some(PacketType::LoginReq(req)) => {
                 let res = LoginRes {
                     result: 'outer: {
-                        let mut lock = if let Ok(lock) = state.lock() {
-                            lock
-                        } else {
-                            break 'outer Err("unknown error!".to_owned());
-                        };
+                        let mut channels_lock = channels.lock().await;
+                        let channel = channels_lock
+                            .get_mut(&channel_name)
+                            .expect("Channel not found");
 
                         if req.login_info.guest {
                             // Guets Login
-                            if lock.num_guest >= session::NUM_MAX_GUEST {
+                            if channel.num_guest() >= session::NUM_MAX_GUEST {
                                 break 'outer Err("too many guests".to_owned());
                             }
 
@@ -185,19 +186,16 @@ async fn session_task(
                                 let random_id = format!("guest_{}", rng.gen::<u16>());
 
                                 // duplicate check
-                                if !lock.names.contains(&random_id) {
+                                if !channel.has_user(&random_id) {
                                     break random_id;
                                 }
                             };
 
-                            // state modification
-                            lock.names.insert(guest_id.clone());
-                            lock.num_guest += 1;
-
+                            channel.connect_user(guest_id.clone().as_str());
                             Ok(guest_id.clone())
                         } else {
                             // Account Login
-                            if lock.num_user >= session::NUM_MAX_USER {
+                            if channel.num_user() >= session::NUM_MAX_USER {
                                 break 'outer Err("too many users".to_owned());
                             }
 
@@ -208,10 +206,8 @@ async fn session_task(
 
                             let res = req.login_info.login(sqlconn.clone());
                             if res.is_ok() {
-                                lock.num_guest -= 1; // every connection is a guest at first
-                                lock.num_user += 1;
-                                lock.names.remove(id.lock().unwrap().as_str());
-                                lock.names.insert(req.login_info.id.clone().unwrap());
+                                channel.leave_user(id.lock().unwrap().as_str());
+                                channel.connect_user(req.login_info.id.clone().unwrap().as_str());
                             }
                             res
                         }
@@ -229,21 +225,17 @@ async fn session_task(
             Some(PacketType::FetchReq(fetch)) => {
                 let fetch_res = match fetch.item.as_str() {
                     "list" => {
-                        let info = match state.lock() {
-                            Ok(lock) => (
-                                lock.names.iter().map(String::from).collect::<Vec<String>>(),
-                                lock.num_user,
-                                lock.num_guest,
-                            ),
-                            _ => continue,
-                        };
+                        let mut channels_lock = channels.lock().await;
+                        let channel = channels_lock
+                            .get_mut(&channel_name)
+                            .expect("Channel not found");
 
                         FetchRes {
                             item: fetch.item,
                             result: Ok(serde_json::json!({
-                                "user_list": info.0,
-                                "num_user": info.1,
-                                "num_guest": info.2,
+                                "user_list": channel.user_list(),
+                                "num_user": channel.num_user(),
+                                "num_guest": channel.num_guest(),
                             })),
                         }
                     }
@@ -276,7 +268,10 @@ async fn session_task(
                                 id.clone(),
                             ));
                             _ = channel_tx.send(PacketType::Connected(Connected {}));
-                            Ok(req.channel_name)
+
+                            // change current channel name
+                            channel_name = req.channel_name;
+                            Ok(channel_name.clone())
                         }
                         None => Err("Invalid or not permitted to join the channel".to_owned()),
                     },
@@ -293,17 +288,13 @@ async fn session_task(
             }
             // Received exit notification from client, remove the client from current session
             Some(PacketType::Exit(_)) => {
-                let mut s = state.lock().unwrap();
-                if let Ok(lock) = id.lock() {
-                    // leaving user is a guest
-                    if lock.starts_with("guest_") {
-                        s.num_guest -= 1;
-                    } else {
-                        s.num_user -= 1;
-                    }
+                let mut channels_lock = channels.lock().await;
+                let channel = channels_lock
+                    .get_mut(&channel_name)
+                    .expect("Channel not found");
 
-                    // remove user from Session
-                    s.names.remove(lock.as_str());
+                if let Ok(lock) = id.lock() {
+                    channel.leave_user(lock.as_str());
 
                     // disconnection broadcasting
                     _ = channel_tx.send(PacketType::Message(Message::disconnection(&lock.clone())));
@@ -324,13 +315,6 @@ pub async fn run_server(port: String) -> Result<(), Box<dyn std::error::Error>> 
         Ok(l) => l,
         Err(e) => panic!("{}", e),
     };
-
-    // Session state
-    let state = Arc::new(Mutex::new(session::State {
-        names: std::collections::HashSet::new(),
-        num_user: 0,
-        num_guest: 0,
-    }));
 
     // Chatting channel list
     let channels = Arc::new(AsyncMutex::new(session::Channels::with_system_channels()));
@@ -368,12 +352,7 @@ pub async fn run_server(port: String) -> Result<(), Box<dyn std::error::Error>> 
     // We're good to go
     while let Ok(s) = listener.accept().await {
         println!("New connection from: {:?}", s.0);
-        tokio::spawn(session_task(
-            s.0,
-            state.clone(),
-            channels.clone(),
-            sqlconn.clone(),
-        ));
+        tokio::spawn(session_task(s.0, channels.clone(), sqlconn.clone()));
     }
     Ok(())
 }

@@ -234,12 +234,13 @@ async fn chat_interface(
         _ = reader.read_until(b'\n', &mut buf).await;
         buf.pop();
 
-        let msg = String::from_utf8(buf).unwrap();
-        if msg.is_empty() {
-            continue;
-        } else if msg.starts_with('/') {
-            // message that starts with '/' is recognized as a command
-            //
+        let msg = match String::from_utf8(buf) {
+            Ok(s) if s.is_empty() => continue,
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        if msg.starts_with('/') {
             // exit if return value of handle_command is true
             if handle_command(&outgoing_tx, &incoming_tx, &msg, &mut state).await {
                 return;

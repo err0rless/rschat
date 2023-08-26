@@ -39,6 +39,47 @@ pub struct Channel {
     pub is_system: bool,
 }
 
+impl Channel {
+    pub fn leave_user(&mut self, name: &str) {
+        if name.starts_with("guest_") {
+            self.state.num_guest -= 1;
+        } else {
+            self.state.num_user -= 1;
+        }
+        self.state.names.remove(name);
+    }
+
+    pub fn num_guest(&self) -> usize {
+        self.state.num_guest
+    }
+
+    pub fn num_user(&self) -> usize {
+        self.state.num_user
+    }
+
+    pub fn has_user(&self, user_name: &str) -> bool {
+        self.state.names.contains(user_name)
+    }
+
+    pub fn user_list(&self) -> Vec<String> {
+        self.state
+            .names
+            .iter()
+            .map(String::from)
+            .collect::<Vec<String>>()
+    }
+
+    // return true if user insertion was successfuly, otherwise false
+    pub fn connect_user(&mut self, user_name: &str) -> bool {
+        if user_name.starts_with("guest_") {
+            self.state.num_guest += 1;
+        } else {
+            self.state.num_user += 1;
+        }
+        self.state.names.insert(user_name.to_owned())
+    }
+}
+
 /// Collection of channels
 #[derive(Debug)]
 pub struct Channels {
@@ -88,6 +129,10 @@ impl Channels {
             );
             self.channels.get(name)
         }
+    }
+
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut Channel> {
+        self.channels.get_mut(name)
     }
 
     pub fn get_channel(&self, name: &str) -> Option<broadcast::Sender<PacketType>> {
