@@ -131,7 +131,7 @@ async fn session_task(
         .expect("Failed to get default channel");
 
     // channel name container
-    let mut channel_name: String = session::DEFAULT_CHANNEL.to_owned();
+    let mut current_channel: String = session::DEFAULT_CHANNEL.to_owned();
 
     // Default channel broadcasting task, notify `cancel_token` to terminate this task gracefully
     // so current client can connect to other chatting channel
@@ -171,7 +171,7 @@ async fn session_task(
                     result: 'outer: {
                         let mut channels_lock = channels.lock().await;
                         let channel = channels_lock
-                            .get_mut(&channel_name)
+                            .get_mut(&current_channel)
                             .expect("Channel not found");
 
                         if req.login_info.guest {
@@ -227,7 +227,7 @@ async fn session_task(
                     "list" => {
                         let mut channels_lock = channels.lock().await;
                         let channel = channels_lock
-                            .get_mut(&channel_name)
+                            .get_mut(&current_channel)
                             .expect("Channel not found");
 
                         FetchRes {
@@ -270,8 +270,8 @@ async fn session_task(
                             _ = channel_tx.send(PacketType::Connected(Connected {}));
 
                             // change current channel name
-                            channel_name = req.channel_name;
-                            Ok(channel_name.clone())
+                            current_channel = req.channel_name;
+                            Ok(current_channel.clone())
                         }
                         None => Err("Invalid or not permitted to join the channel".to_owned()),
                     },
@@ -290,7 +290,7 @@ async fn session_task(
             Some(PacketType::Exit(_)) => {
                 let mut channels_lock = channels.lock().await;
                 let channel = channels_lock
-                    .get_mut(&channel_name)
+                    .get_mut(&current_channel)
                     .expect("Channel not found");
 
                 if let Ok(lock) = id.lock() {
