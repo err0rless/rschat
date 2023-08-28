@@ -213,34 +213,52 @@ async fn session_task(
                 _ = res_tx.send(PacketType::FetchRes(fetch_res)).await;
             }
             Some(PacketType::GotoReq(req)) => {
+                let mut previous_channel_name = "".to_owned();
                 let packet = PacketType::GotoRes(GotoRes {
-                    result: match channels.lock().await.get_channel(req.channel_name.as_str()) {
-                        Some(sender) => {
-                            // notify the existing task for graceful termination
-                            cancel_token.cancel();
+                    result: match channels.lock().await.get_mut(req.channel_name.as_str()) {
+                        Some(req_channel) => {
+                            // save channel name and reassign
+                            previous_channel_name = current_channel.clone();
+                            current_channel = req.channel_name;
 
-                            // new token for upcoming task!
+                            // notify the existing channel for termination and generate a new token
+                            cancel_token.cancel();
                             cancel_token = CancellationToken::new();
 
                             // new broadcasting channel
-                            channel_tx = sender.clone();
-
-                            // spawn a new task for this channel
+                            channel_tx = req_channel.channel.clone();
                             tokio::task::spawn(message_handler(
-                                sender.subscribe(),
+                                channel_tx.subscribe(),
                                 sock_tx.clone(),
                                 cancel_token.clone(),
                                 id.clone(),
                             ));
                             _ = channel_tx.send(PacketType::Connected(Connected {}));
 
-                            // change current channel name
-                            current_channel = req.channel_name;
-                            Ok(current_channel.clone())
+                            // update state
+                            if let Ok(lock) = id.lock() {
+                                req_channel.add_connection(lock.as_str());
+                                Ok(current_channel.clone())
+                            } else {
+                                Err("Failed to get identifier".to_owned())
+                            }
                         }
                         None => Err("Invalid or not permitted to join the channel".to_owned()),
                     },
                 });
+
+                // FIXME: Mutex lock for `channels` is valid til the end of the above statement,
+                // so we cannot update state of the current channel. Looks ugly.
+                match &packet {
+                    PacketType::GotoRes(res) if res.result.is_ok() => channels
+                        .lock()
+                        .await
+                        .get_mut(previous_channel_name.as_str())
+                        .expect("Channel not found")
+                        .leave_user(id.lock().as_deref().unwrap()),
+                    _ => (),
+                };
+
                 if let Err(e) = res_tx.send(packet).await {
                     // Somehow failed to send
                     println!("{}", e);

@@ -72,7 +72,7 @@ impl Channel {
             .collect::<Vec<String>>()
     }
 
-    fn add_connection(&mut self, user_name: &str) -> bool {
+    pub fn add_connection(&mut self, user_name: &str) -> bool {
         if user_name.starts_with("guest_") {
             self.state.num_guest += 1;
         } else {
