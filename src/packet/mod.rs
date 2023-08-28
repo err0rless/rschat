@@ -3,13 +3,31 @@ use serde_json::Value;
 
 use crate::db;
 
+pub trait AsJson {
+    fn as_json_string(&self) -> String
+    where
+        Self: Serialize,
+    {
+        serde_json::to_string(&self).unwrap()
+    }
+
+    fn as_json_bytes(&self) -> Vec<u8>
+    where
+        Self: Serialize,
+    {
+        serde_json::to_vec(&self).unwrap()
+    }
+}
+
 // macro for packet declarations
 macro_rules! packet_declarations {
-    ($($item:item) *) => {
+    ($($vis:vis struct $name:ident $body:tt)*) => {
         $(
             #[derive(Serialize, Deserialize, Debug, Clone)]
             #[serde(tag = "type")]
-            $item
+            $vis struct $name $body
+
+            impl AsJson for $name {}
         )*
     }
 }
@@ -80,35 +98,6 @@ impl Message {
         }
     }
 }
-
-pub trait AsJson {
-    fn as_json_string(&self) -> String
-    where
-        Self: Serialize,
-    {
-        serde_json::to_string(&self).unwrap()
-    }
-
-    fn as_json_bytes(&self) -> Vec<u8>
-    where
-        Self: Serialize,
-    {
-        serde_json::to_vec(&self).unwrap()
-    }
-}
-
-impl AsJson for serde_json::Value {}
-impl AsJson for Message {}
-impl AsJson for RegisterReq {}
-impl AsJson for RegisterRes {}
-impl AsJson for LoginReq {}
-impl AsJson for LoginRes {}
-impl AsJson for FetchReq {}
-impl AsJson for FetchRes {}
-impl AsJson for GotoReq {}
-impl AsJson for GotoRes {}
-impl AsJson for Connected {}
-impl AsJson for Exit {}
 
 #[derive(Clone, Debug)]
 pub enum PacketType {
