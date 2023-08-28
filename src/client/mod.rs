@@ -208,7 +208,6 @@ async fn handle_chat(outgoing_tx: &mpsc::Sender<String>, msg: &str, state: &sess
     }
     .as_json_string();
 
-    // send message to server
     if let Err(e) = outgoing_tx.send(msg_bytes).await {
         println!("Channel send failed: {}", e);
     }
@@ -251,9 +250,7 @@ async fn chat_interface(
     }
 }
 
-/// Consumes broadcast channel until encounter the packet type: `T`
-///
-/// Make sure no same type of request between request and consume_til.
+/// Consumes broadcast channel until encounter the packet type `P`
 async fn consume_til<P>(mut incoming_rx: broadcast::Receiver<String>) -> P
 where
     P: serde::de::DeserializeOwned,
@@ -305,7 +302,6 @@ pub async fn run_client(port: String) -> Result<(), Box<dyn std::error::Error>> 
             )
             .await?;
 
-        // blocks until server respond to the join request
         match consume_til::<LoginRes>(incoming_tx.subscribe())
             .await
             .result

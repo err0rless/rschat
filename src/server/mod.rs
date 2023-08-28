@@ -11,10 +11,16 @@ use crate::packet::*;
 pub mod session;
 
 /// write `bytes` to the TCP stream with size header
-async fn send_sized_bytes(wr: &mut WriteHalf<TcpStream>, bytes: &[u8]) {
+async fn send_sized_bytes(
+    wr: &mut WriteHalf<TcpStream>,
+    bytes: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
     // super simple message protocol [Size: u32][Message: bytes]
-    _ = wr.write_u32(bytes.len() as u32).await;
-    _ = wr.write_all(bytes).await;
+    let mut writer = Vec::new();
+    writer.write_u32(bytes.len() as u32).await?;
+    writer.write_all(bytes).await?;
+    wr.write_all(&writer).await?;
+    Ok(())
 }
 
 /// Consume messages from `sock_rx` channel and write them to `wr` directly
@@ -38,7 +44,6 @@ async fn message_handler(
     let connected = AtomicBool::new(false);
     loop {
         tokio::select! {
-            // Client left this channel, terminate this task gracefully
             _ = cancel_token.cancelled() => {
                 break
             }
@@ -260,7 +265,6 @@ async fn session_task(
                 };
 
                 if let Err(e) = res_tx.send(packet).await {
-                    // Somehow failed to send
                     println!("{}", e);
                 }
             }
