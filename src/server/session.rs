@@ -1,5 +1,8 @@
+use rand::prelude::*;
 use std::collections::{HashMap, HashSet};
 use tokio::sync::broadcast;
+
+use std::sync::{Arc, Mutex};
 
 use crate::packet::*;
 
@@ -69,14 +72,59 @@ impl Channel {
             .collect::<Vec<String>>()
     }
 
-    // return true if user insertion was successfuly, otherwise false
-    pub fn connect_user(&mut self, user_name: &str) -> bool {
+    fn add_connection(&mut self, user_name: &str) -> bool {
         if user_name.starts_with("guest_") {
             self.state.num_guest += 1;
         } else {
             self.state.num_user += 1;
         }
         self.state.names.insert(user_name.to_owned())
+    }
+
+    /// Add a new user connection to `self`
+    pub fn connect_user(
+        &mut self,
+        req: &LoginReq,
+        cur_id: &str,
+        sqlconn: Arc<Mutex<rusqlite::Connection>>,
+    ) -> Result<String, String> {
+        // Account Login
+        if self.num_user() >= NUM_MAX_USER {
+            return Err("too many users".to_owned());
+        }
+
+        // validation of inputs was done before this packet reached here, but somehow it's broken
+        if req.login_info.id.is_none() || req.login_info.password.is_none() {
+            return Err("broken login packet".to_owned());
+        }
+
+        let res = req.login_info.login(sqlconn.clone());
+        if res.is_ok() {
+            self.leave_user(cur_id);
+            self.add_connection(req.login_info.id.as_ref().unwrap().as_str());
+        }
+        res
+    }
+
+    /// Add a new guest connection to `self`
+    pub fn connect_guest(&mut self) -> Result<String, String> {
+        if self.num_guest() >= NUM_MAX_GUEST {
+            return Err("too many guests".to_owned());
+        }
+
+        // Generate a random guest name
+        let mut rng = rand::thread_rng();
+        let guest_id = loop {
+            let random_id = format!("guest_{}", rng.gen::<u16>());
+
+            // duplicate check
+            if !self.has_user(&random_id) {
+                break random_id;
+            }
+        };
+
+        self.add_connection(guest_id.clone().as_str());
+        Ok(guest_id)
     }
 }
 

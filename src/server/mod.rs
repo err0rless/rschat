@@ -1,7 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use rand::prelude::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
@@ -168,48 +167,15 @@ async fn session_task(
             // Received a request to login
             Some(PacketType::LoginReq(req)) => {
                 let res = LoginRes {
-                    result: 'outer: {
+                    result: {
                         let mut channels_lock = channels.lock().await;
                         let channel = channels_lock
                             .get_mut(&current_channel)
                             .expect("Channel not found");
-
                         if req.login_info.guest {
-                            // Guets Login
-                            if channel.num_guest() >= session::NUM_MAX_GUEST {
-                                break 'outer Err("too many guests".to_owned());
-                            }
-
-                            // Generate a random guest name
-                            let mut rng = rand::thread_rng();
-                            let guest_id = loop {
-                                let random_id = format!("guest_{}", rng.gen::<u16>());
-
-                                // duplicate check
-                                if !channel.has_user(&random_id) {
-                                    break random_id;
-                                }
-                            };
-
-                            channel.connect_user(guest_id.clone().as_str());
-                            Ok(guest_id.clone())
+                            channel.connect_guest()
                         } else {
-                            // Account Login
-                            if channel.num_user() >= session::NUM_MAX_USER {
-                                break 'outer Err("too many users".to_owned());
-                            }
-
-                            // validation of inputs was done before this packet reached here, but somehow it's broken
-                            if req.login_info.id.is_none() || req.login_info.password.is_none() {
-                                break 'outer Err("broken login packet".to_owned());
-                            }
-
-                            let res = req.login_info.login(sqlconn.clone());
-                            if res.is_ok() {
-                                channel.leave_user(id.lock().unwrap().as_str());
-                                channel.connect_user(req.login_info.id.clone().unwrap().as_str());
-                            }
-                            res
+                            channel.connect_user(&req, id.lock().unwrap().as_str(), sqlconn.clone())
                         }
                     },
                 };
@@ -229,7 +195,6 @@ async fn session_task(
                         let channel = channels_lock
                             .get_mut(&current_channel)
                             .expect("Channel not found");
-
                         FetchRes {
                             item: fetch.item,
                             result: Ok(serde_json::json!({
