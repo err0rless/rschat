@@ -125,7 +125,7 @@ async fn session_task(
     // Channel for sending response back to client, or any type of packet that needs to be sent
     // to only current client
     let (res_tx, res_rx) = mpsc::channel::<PacketType>(32);
-    tokio::task::spawn(response_handler(res_rx, sock_tx.clone(), id.clone()));
+    tokio::task::spawn(response_handler(res_rx, sock_tx.clone(), Arc::clone(&id)));
 
     // default meessage channel
     let mut channel_tx = channels
@@ -144,7 +144,7 @@ async fn session_task(
         channel_tx.subscribe(),
         sock_tx.clone(),
         cancel_token.clone(),
-        id.clone(),
+        Arc::clone(&id),
     ));
 
     let mut buf = [0; 1024];
@@ -165,7 +165,7 @@ async fn session_task(
             // Received a request to create a new account
             Some(PacketType::RegisterReq(req)) => {
                 let res = RegisterRes {
-                    result: req.user.insert(sqlconn.clone()),
+                    result: req.user.insert(Arc::clone(&sqlconn)),
                 };
                 _ = res_tx.send(PacketType::RegisterRes(res)).await;
             }
@@ -180,7 +180,11 @@ async fn session_task(
                         if req.login_info.guest {
                             channel.connect_guest()
                         } else {
-                            channel.connect_user(&req, id.lock().unwrap().as_str(), sqlconn.clone())
+                            channel.connect_user(
+                                &req,
+                                id.lock().unwrap().as_str(),
+                                Arc::clone(&sqlconn),
+                            )
                         }
                     },
                 };
@@ -236,7 +240,7 @@ async fn session_task(
                                 channel_tx.subscribe(),
                                 sock_tx.clone(),
                                 cancel_token.clone(),
-                                id.clone(),
+                                Arc::clone(&id),
                             ));
                             _ = channel_tx.send(PacketType::Connected(Connected {}));
 
@@ -339,7 +343,11 @@ pub async fn run_server(port: String) -> Result<(), Box<dyn std::error::Error>> 
     // We're good to go
     while let Ok(s) = listener.accept().await {
         println!("New connection from: {:?}", s.0);
-        tokio::spawn(session_task(s.0, channels.clone(), sqlconn.clone()));
+        tokio::spawn(session_task(
+            s.0,
+            Arc::clone(&channels),
+            Arc::clone(&sqlconn),
+        ));
     }
     Ok(())
 }
