@@ -11,6 +11,14 @@ use crate::packet::*;
 pub mod command;
 pub mod session;
 
+enum HandleCommandStatus {
+    // Requested to exit program
+    Exit,
+
+    // Continue to handle
+    Continue,
+}
+
 fn get_mark(id: &str) -> char {
     match id {
         s if s.starts_with("guest_") => '%',
@@ -70,7 +78,7 @@ async fn handle_command(
     incoming_tx: &broadcast::Sender<String>,
     cmd: &str,
     state: &mut session::State,
-) -> bool {
+) -> HandleCommandStatus {
     match Command::from_str(cmd) {
         Some(Command::Help) => {
             Command::help();
@@ -88,7 +96,7 @@ async fn handle_command(
                 u
             } else {
                 println!("[#System] failed to register");
-                return false;
+                return HandleCommandStatus::Continue;
             };
 
             let register_req = RegisterReq { user }.as_json_string();
@@ -108,14 +116,14 @@ async fn handle_command(
         Some(Command::Login(login_id)) => {
             if !state.is_guest {
                 println!("[#System] You are already logged in");
-                return false;
+                return HandleCommandStatus::Continue;
             }
 
             let login_info = if let Some(u) = db::user::Login::from_stdin(login_id).await {
                 u
             } else {
                 println!("[#System] `id` or `password` is empty");
-                return false;
+                return HandleCommandStatus::Continue;
             };
 
             // id backup
@@ -125,7 +133,7 @@ async fn handle_command(
                 .await
             {
                 println!("[login] Channel send failed, try again: '{}'", e);
-                return false;
+                return HandleCommandStatus::Continue;
             }
 
             // block til Login response
@@ -147,7 +155,7 @@ async fn handle_command(
                 Fetch::UserList => "list",
                 _ => {
                     println!("[fetch] Unhandled fetch item");
-                    return false;
+                    return HandleCommandStatus::Continue;
                 }
             };
 
@@ -161,7 +169,7 @@ async fn handle_command(
                 .await
             {
                 println!("[fetch] Channel send failed, try again: '{}'", e);
-                return false;
+                return HandleCommandStatus::Continue;
             }
 
             // block til Login response
@@ -192,12 +200,12 @@ async fn handle_command(
         Some(Command::Exit) => {
             println!(" >> See you soon <<");
             _ = outgoing_tx.send(Exit {}.as_json_string()).await;
-            return true;
+            return HandleCommandStatus::Exit;
         }
         // Not a command
         None => (),
     }
-    false
+    HandleCommandStatus::Continue
 }
 
 async fn handle_chat(outgoing_tx: &mpsc::Sender<String>, msg: &str, state: &session::State) {
@@ -241,8 +249,9 @@ async fn chat_interface(
 
         if msg.starts_with('/') {
             // exit if return value of handle_command is true
-            if handle_command(&outgoing_tx, &incoming_tx, &msg, &mut state).await {
-                return;
+            match handle_command(&outgoing_tx, &incoming_tx, &msg, &mut state).await {
+                HandleCommandStatus::Exit => return,
+                _ => (),
             }
         } else {
             handle_chat(&outgoing_tx, &msg, &state).await;
