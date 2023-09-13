@@ -249,9 +249,10 @@ async fn chat_interface(
 
         if msg.starts_with('/') {
             // exit if return value of handle_command is true
-            match handle_command(&outgoing_tx, &incoming_tx, &msg, &mut state).await {
-                HandleCommandStatus::Exit => return,
-                _ => (),
+            if let HandleCommandStatus::Exit =
+                handle_command(&outgoing_tx, &incoming_tx, &msg, &mut state).await
+            {
+                return;
             }
         } else {
             handle_chat(&outgoing_tx, &msg, &state).await;
