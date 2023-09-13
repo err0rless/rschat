@@ -92,9 +92,7 @@ async fn handle_command(
             }
         },
         Some(Command::Register) => {
-            let user = if let Some(u) = db::user::User::from_stdin().await {
-                u
-            } else {
+            let Some(user) = db::user::User::from_stdin().await else {
                 println!("[#System] failed to register");
                 return HandleCommandStatus::Continue;
             };
@@ -119,9 +117,7 @@ async fn handle_command(
                 return HandleCommandStatus::Continue;
             }
 
-            let login_info = if let Some(u) = db::user::Login::from_stdin(login_id).await {
-                u
-            } else {
+            let Some(login_info) = db::user::Login::from_stdin(login_id).await else {
                 println!("[#System] `id` or `password` is empty");
                 return HandleCommandStatus::Continue;
             };
@@ -275,7 +271,7 @@ where
     }
 }
 
-pub async fn run_client(port: String) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_client(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("|----------------------------------------------|");
     println!("|--------------- [RsSimpleChat] ---------------|");
     println!("|----------------------------------------------|");

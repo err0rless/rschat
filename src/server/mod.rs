@@ -156,11 +156,10 @@ async fn session_task(
             Err(_) => return,
         };
 
-        let msg_str = if let Ok(s) = std::str::from_utf8(&buf[0..n]) {
-            s
-        } else {
+        let Ok(msg_str) = std::str::from_utf8(&buf[0..n]) else {
             continue;
         };
+
         match PacketType::from_str(msg_str) {
             // Received a request to create a new account
             Some(PacketType::RegisterReq(req)) => {
@@ -300,7 +299,7 @@ async fn session_task(
     }
 }
 
-pub async fn run_server(port: String) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_server(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("[RsChat Sever] Bining on port {}...", port);
     let listener = match TcpListener::bind(format!("0.0.0.0:{}", port)).await {
         Ok(l) => l,
