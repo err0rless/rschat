@@ -115,22 +115,8 @@ pub enum PacketType {
 }
 
 impl PacketType {
-    pub fn from_str(data: &str) -> Option<Self> {
-        let json_value: Value = match serde_json::from_str(data) {
-            Ok(v) => v,
-            Err(_) => return None,
-        };
-
-        let map = match json_value.as_object() {
-            Some(m) => m,
-            None => return None,
-        };
-
-        let packet_type = match map.get("type") {
-            Some(pt) => pt,
-            None => return None,
-        };
-
+    pub fn from_str(raw_json: &str) -> Option<Self> {
+        let json_value: Value = serde_json::from_str(raw_json).ok()?;
         macro_rules! packet_from_str {
             ($packet:ident) => {{
                 let r: $packet = serde_json::from_value(json_value).unwrap();
@@ -138,6 +124,7 @@ impl PacketType {
             }};
         }
 
+        let packet_type = json_value.as_object()?.get("type")?;
         match packet_type.as_str() {
             Some("RegisterReq") => packet_from_str!(RegisterReq),
             Some("RegisterRes") => packet_from_str!(RegisterRes),
