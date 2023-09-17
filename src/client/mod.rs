@@ -1,12 +1,11 @@
 use std::io::Write;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf},
+    net::TcpStream,
+    sync::{broadcast, mpsc},
+};
 
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
-use tokio::net::TcpStream;
-use tokio::sync::{broadcast, mpsc};
-
-use crate::client::command::*;
-use crate::db;
-use crate::packet::*;
+use crate::{client::command::*, db, packet::*};
 
 pub mod command;
 pub mod session;

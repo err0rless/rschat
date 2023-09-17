@@ -1,9 +1,13 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt, WriteHalf};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt, WriteHalf},
+    net::{TcpListener, TcpStream},
+    sync::{broadcast, mpsc, Mutex as AsyncMutex},
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::packet::*;
@@ -151,9 +155,8 @@ async fn session_task(
     loop {
         // read data from client
         let n = match rd.read(&mut buf).await {
-            Ok(0) => return,
+            Ok(0) | Err(_) => return,
             Ok(n) => n,
-            Err(_) => return,
         };
 
         let Ok(msg_str) = std::str::from_utf8(&buf[0..n]) else {

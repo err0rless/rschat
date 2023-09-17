@@ -1,8 +1,10 @@
-use rand::prelude::*;
-use std::collections::{HashMap, HashSet};
-use tokio::sync::broadcast;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
+};
 
-use std::sync::{Arc, Mutex};
+use rand::prelude::*;
+use tokio::sync::broadcast;
 
 use crate::packet::*;
 
