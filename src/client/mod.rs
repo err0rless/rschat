@@ -1,14 +1,16 @@
 use std::io::Write;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf},
+    io::AsyncBufReadExt,
     net::TcpStream,
     sync::{broadcast, mpsc},
 };
 
 use crate::{client::command::*, db, packet::*};
 
+pub mod background_task;
 pub mod command;
 pub mod session;
+pub mod util;
 
 enum HandleCommandStatus {
     // Requested to exit program
@@ -16,60 +18,6 @@ enum HandleCommandStatus {
 
     // Continue to handle
     Continue,
-}
-
-fn get_mark(id: &str) -> char {
-    match id {
-        s if s.starts_with("guest_") => '%',
-        s if s.starts_with("root") => '#',
-        _ => '@',
-    }
-}
-
-/// receive formatted packets from `rd` and enqueue them to `incoming_tx` channel
-async fn produce_incomings(mut rd: ReadHalf<TcpStream>, incoming_tx: broadcast::Sender<String>) {
-    loop {
-        // Size header
-        let size_msg = match rd.read_u32().await {
-            Ok(0) | Err(_) => panic!("[#System] EOF"),
-            Ok(size) => size,
-        };
-
-        // Message body
-        let mut buf = vec![0; size_msg as usize];
-        let n = match rd.read_exact(buf.as_mut_slice()).await {
-            Ok(0) | Err(_) => panic!("[#System] EOF"),
-            Ok(size) => size,
-        };
-
-        let msg_str = String::from_utf8(buf[0..n].to_vec()).unwrap();
-        _ = incoming_tx.send(msg_str);
-    }
-}
-
-/// handle message packets
-async fn print_message_packets(mut incoming_rx: broadcast::Receiver<String>) {
-    loop {
-        let msg_str = match incoming_rx.recv().await {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-
-        match serde_json::from_str::<Message>(msg_str.as_str()) {
-            Ok(msg) if msg.is_system => println!("[#System] {}", msg.msg),
-            Ok(msg) => println!("{}{}: {}", get_mark(&msg.id), msg.id, msg.msg),
-            _ => (),
-        }
-    }
-}
-
-async fn consume_outgoings(
-    mut write_stream: WriteHalf<TcpStream>,
-    mut outgoing_rx: mpsc::Receiver<String>,
-) {
-    while let Some(msg) = outgoing_rx.recv().await {
-        _ = write_stream.write_all(msg.as_bytes()).await;
-    }
 }
 
 async fn handle_command(
@@ -102,7 +50,7 @@ async fn handle_command(
             }
 
             // block til Register response
-            match consume_til::<RegisterRes>(incoming_tx.subscribe())
+            match util::consume_til::<RegisterRes>(incoming_tx.subscribe())
                 .await
                 .result
             {
@@ -132,7 +80,7 @@ async fn handle_command(
             }
 
             // block til Login response
-            match consume_til::<LoginRes>(incoming_tx.subscribe())
+            match util::consume_til::<LoginRes>(incoming_tx.subscribe())
                 .await
                 .result
             {
@@ -168,14 +116,12 @@ async fn handle_command(
             }
 
             // block til Login response
-            let fetch_res = consume_til::<FetchRes>(incoming_tx.subscribe()).await;
+            let fetch_res = util::consume_til::<FetchRes>(incoming_tx.subscribe()).await;
             match fetch_res.item.as_str() {
-                "list" => {
-                    _ = fetch_res
-                        .result
-                        .map(|v| println!("{}", serde_json::to_string_pretty(&v).unwrap()))
-                        .map_err(|e| println!("{}", e));
-                }
+                "list" => match fetch_res.result {
+                    Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
+                    Err(e) => println!("{}", e),
+                },
                 unknown => println!("[#System:Fetch] unknown item: '{}'", unknown),
             };
         }
@@ -183,7 +129,10 @@ async fn handle_command(
             _ = outgoing_tx
                 .send(GotoReq { channel_name }.as_json_string())
                 .await;
-            match consume_til::<GotoRes>(incoming_tx.subscribe()).await.result {
+            match util::consume_til::<GotoRes>(incoming_tx.subscribe())
+                .await
+                .result
+            {
                 Ok(name) => {
                     // goto succeeded, change channel
                     state.channel = name.clone();
@@ -224,16 +173,16 @@ async fn chat_interface(
     loop {
         print!(
             "You ({}{} in '{}') >> ",
-            get_mark(&state.id),
+            util::get_mark(&state.id),
             state.id,
             state.channel
         );
         std::io::stdout().flush().unwrap();
 
         let mut buf: Vec<u8> = Vec::new();
-        let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
-
-        _ = reader.read_until(b'\n', &mut buf).await;
+        _ = tokio::io::BufReader::new(tokio::io::stdin())
+            .read_until(b'\n', &mut buf)
+            .await;
         buf.pop();
 
         let msg = match String::from_utf8(buf) {
@@ -251,21 +200,6 @@ async fn chat_interface(
             }
         } else {
             handle_chat(&outgoing_tx, &msg, &state).await;
-        }
-    }
-}
-
-/// Consumes broadcast channel until encounter the packet type `P`
-async fn consume_til<P>(mut incoming_rx: broadcast::Receiver<String>) -> P
-where
-    P: serde::de::DeserializeOwned,
-{
-    loop {
-        if let Ok(msg) = incoming_rx.recv().await {
-            let j: serde_json::Value = serde_json::from_str(msg.as_str()).unwrap();
-            if let Ok(res) = serde_json::from_value::<P>(j) {
-                break res;
-            }
         }
     }
 }
@@ -288,13 +222,15 @@ pub async fn run_client(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     let (incoming_tx, _) = broadcast::channel::<String>(32);
 
     // Task for comsuming the outgoing channel
-    tokio::task::spawn(consume_outgoings(wr, outgoing_rx));
+    tokio::task::spawn(background_task::consume_outgoings(wr, outgoing_rx));
 
     // Task for reading TcpStream and enqueueing the messages to the channel
-    tokio::task::spawn(produce_incomings(rd, incoming_tx.clone()));
+    tokio::task::spawn(background_task::produce_incomings(rd, incoming_tx.clone()));
 
     // Task for receiving broadcast messages from server
-    tokio::task::spawn(print_message_packets(incoming_tx.subscribe()));
+    tokio::task::spawn(background_task::print_message_packets(
+        incoming_tx.subscribe(),
+    ));
 
     let id = {
         outgoing_tx
@@ -307,7 +243,7 @@ pub async fn run_client(port: &str) -> Result<(), Box<dyn std::error::Error>> {
             )
             .await?;
 
-        match consume_til::<LoginRes>(incoming_tx.subscribe())
+        match util::consume_til::<LoginRes>(incoming_tx.subscribe())
             .await
             .result
         {
