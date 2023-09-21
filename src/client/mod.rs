@@ -252,11 +252,7 @@ pub async fn run_client(port: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let state = session::State {
-        is_guest: true,
-        id,
-        channel: "public".to_owned(),
-    };
+    let state = session::State::new_guest(id.as_str());
 
     // Shell-like interface for chat client
     let main_task = tokio::task::spawn(chat_interface(
