@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 // Request specific type of information from server
 pub enum Fetch {
     UserList,
@@ -14,10 +16,15 @@ pub enum Command {
     Exit,
 }
 
-impl Command {
-    pub fn from_str(s: &str) -> Option<Command> {
+#[derive(Debug, PartialEq, Eq)]
+pub struct ParseCommandError;
+
+impl FromStr for Command {
+    type Err = ParseCommandError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         if !s.starts_with('/') {
-            return None;
+            return Err(ParseCommandError);
         }
 
         let cmdline = s.trim_end();
@@ -28,10 +35,10 @@ impl Command {
         };
 
         match command {
-            "exit" => Some(Command::Exit),
-            "help" | "h" => Some(Command::Help),
-            "register" | "reg" => Some(Command::Register),
-            "login" => Some(Command::Login(
+            "exit" => Ok(Command::Exit),
+            "help" | "h" => Ok(Command::Help),
+            "register" | "reg" => Ok(Command::Register),
+            "login" => Ok(Command::Login(
                 cmdline
                     .find(' ')
                     .map(|idx| String::from(cmdline[idx + 1..].trim())),
@@ -39,32 +46,34 @@ impl Command {
             "get" => {
                 if let Some(idx) = cmdline.find(' ') {
                     let item = String::from(cmdline[idx + 1..].trim());
-                    Some(Command::Get(item))
+                    Ok(Command::Get(item))
                 } else {
                     println!("[#SystemError] Command 'get' requires an argument: '[key]'");
-                    None
+                    Err(ParseCommandError)
                 }
             }
-            "fetch" => Some(Command::Fetch(
+            "fetch" => Ok(Command::Fetch(
                 match cmdline.find(' ').map(|idx| cmdline[idx + 1..].trim()) {
                     Some("list") => Fetch::UserList,
                     _ => Fetch::None,
                 },
             )),
             "goto" => match cmdline.find(' ') {
-                Some(idx) => Some(Command::Goto(String::from(cmdline[idx + 1..].trim()))),
+                Some(idx) => Ok(Command::Goto(String::from(cmdline[idx + 1..].trim()))),
                 None => {
                     println!("[#SystemError] Command 'goto' requires an argument: [channel_name]");
-                    None
+                    Err(ParseCommandError)
                 }
             },
             cmd => {
                 println!("Unknown command: '{}'", cmd);
-                None
+                Err(ParseCommandError)
             }
         }
     }
+}
 
+impl Command {
     pub fn help() {
         println!(" | ----- Help -----");
         println!(" | /help: help message");

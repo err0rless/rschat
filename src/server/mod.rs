@@ -1,6 +1,9 @@
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+use std::{
+    str::FromStr,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use tokio::{
@@ -165,14 +168,14 @@ async fn session_task(
 
         match PacketType::from_str(msg_str) {
             // Received a request to create a new account
-            Some(PacketType::RegisterReq(req)) => {
+            Ok(PacketType::RegisterReq(req)) => {
                 let res = RegisterRes {
                     result: req.user.insert(Arc::clone(&sqlconn)),
                 };
                 _ = res_tx.send(PacketType::RegisterRes(res)).await;
             }
             // Received a request to login
-            Some(PacketType::LoginReq(req)) => {
+            Ok(PacketType::LoginReq(req)) => {
                 let res = LoginRes {
                     result: {
                         let mut channels_lock = channels.lock().await;
@@ -199,7 +202,7 @@ async fn session_task(
                 }
                 _ = res_tx.send(PacketType::LoginRes(res)).await;
             }
-            Some(PacketType::FetchReq(fetch)) => {
+            Ok(PacketType::FetchReq(fetch)) => {
                 let fetch_res = match fetch.item.as_str() {
                     "list" => {
                         let mut channels_lock = channels.lock().await;
@@ -223,7 +226,7 @@ async fn session_task(
                 };
                 _ = res_tx.send(PacketType::FetchRes(fetch_res)).await;
             }
-            Some(PacketType::GotoReq(req)) => {
+            Ok(PacketType::GotoReq(req)) => {
                 let mut previous_channel_name = "".to_owned();
                 let packet = PacketType::GotoRes(GotoRes {
                     result: match channels.lock().await.get_mut(req.channel_name.as_str()) {
@@ -275,12 +278,12 @@ async fn session_task(
                 }
             }
             // Received a request to broadcast message
-            Some(PacketType::Message(msg)) => {
+            Ok(PacketType::Message(msg)) => {
                 // Send message to the channel for broadcasting to connected clients
                 _ = channel_tx.send(PacketType::Message(msg));
             }
             // Received exit notification from client, remove the client from current session
-            Some(PacketType::Exit(_)) => {
+            Ok(PacketType::Exit(_)) => {
                 let mut channels_lock = channels.lock().await;
                 let channel = channels_lock
                     .get_mut(&current_channel)
@@ -294,7 +297,7 @@ async fn session_task(
                 }
                 return;
             }
-            None => {
+            Err(_) => {
                 println!("[!] Failed to parse packet from: '{}'", msg_str);
             }
             _ => {}

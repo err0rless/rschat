@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::{io::Write, str::FromStr};
 use tokio::{
     io::AsyncBufReadExt,
     net::TcpStream,
@@ -27,10 +27,10 @@ async fn handle_command(
     state: &mut session::State,
 ) -> HandleCommandStatus {
     match Command::from_str(cmd) {
-        Some(Command::Help) => {
+        Ok(Command::Help) => {
             Command::help();
         }
-        Some(Command::Get(item)) => match &item[..] {
+        Ok(Command::Get(item)) => match &item[..] {
             "info" | "name" => {
                 println!("[#cmd:get] Your ID: '{}'", state.id);
             }
@@ -38,7 +38,7 @@ async fn handle_command(
                 println!("[#SystemError] Unknown item: '{}'", item);
             }
         },
-        Some(Command::Register) => {
+        Ok(Command::Register) => {
             let Some(user) = db::user::User::from_stdin().await else {
                 println!("[#System] failed to register");
                 return HandleCommandStatus::Continue;
@@ -58,7 +58,7 @@ async fn handle_command(
                 Err(s) => println!("[#System:Register] Failure: '{}'", s),
             };
         }
-        Some(Command::Login(login_id)) => {
+        Ok(Command::Login(login_id)) => {
             if !state.is_guest {
                 println!("[#System] You are already logged in");
                 return HandleCommandStatus::Continue;
@@ -93,7 +93,7 @@ async fn handle_command(
                 Err(s) => println!("[#System:Login] Failure: '{}'", s),
             };
         }
-        Some(Command::Fetch(fetch)) => {
+        Ok(Command::Fetch(fetch)) => {
             let item_str = match fetch {
                 Fetch::UserList => "list",
                 _ => {
@@ -125,7 +125,7 @@ async fn handle_command(
                 unknown => println!("[#System:Fetch] unknown item: '{}'", unknown),
             };
         }
-        Some(Command::Goto(channel_name)) => {
+        Ok(Command::Goto(channel_name)) => {
             _ = outgoing_tx
                 .send(GotoReq { channel_name }.as_json_string())
                 .await;
@@ -141,13 +141,13 @@ async fn handle_command(
                 Err(e) => println!("[#System:Goto] failed to join channel: '{}'", e),
             }
         }
-        Some(Command::Exit) => {
+        Ok(Command::Exit) => {
             println!(" >> See you soon <<");
             _ = outgoing_tx.send(Exit {}.as_json_string()).await;
             return HandleCommandStatus::Exit;
         }
         // Not a command
-        None => (),
+        Err(_) => (),
     }
     HandleCommandStatus::Continue
 }

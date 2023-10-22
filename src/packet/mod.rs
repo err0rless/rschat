@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -114,17 +116,31 @@ pub enum PacketType {
     Exit(Exit),
 }
 
-impl PacketType {
-    pub fn from_str(raw_json: &str) -> Option<Self> {
-        let json_value: Value = serde_json::from_str(raw_json).ok()?;
+#[derive(Debug, PartialEq, Eq)]
+pub struct ParsePacketTypeError;
+
+impl From<()> for ParsePacketTypeError {
+    fn from(_: ()) -> Self {
+        ParsePacketTypeError {}
+    }
+}
+
+impl FromStr for PacketType {
+    type Err = ParsePacketTypeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let Ok(json_value): Result<Value, _> = serde_json::from_str(s) else {
+            return Err(ParsePacketTypeError);
+        };
+
         macro_rules! packet_from_str {
             ($packet:ident) => {{
                 let r: $packet = serde_json::from_value(json_value).unwrap();
-                Some(PacketType::$packet(r))
+                Ok(PacketType::$packet(r))
             }};
         }
 
-        let packet_type = json_value.as_object()?.get("type")?;
+        let packet_type = json_value.as_object().ok_or(())?.get("type").ok_or(())?;
         match packet_type.as_str() {
             Some("RegisterReq") => packet_from_str!(RegisterReq),
             Some("RegisterRes") => packet_from_str!(RegisterRes),
@@ -135,13 +151,13 @@ impl PacketType {
             Some("GotoReq") => packet_from_str!(GotoReq),
             Some("GotoRes") => packet_from_str!(GotoRes),
             Some("Message") => packet_from_str!(Message),
-            Some("Connected") => Some(PacketType::Connected(Connected {})),
-            Some("Exit") => Some(PacketType::Exit(Exit {})),
+            Some("Connected") => Ok(PacketType::Connected(Connected {})),
+            Some("Exit") => Ok(PacketType::Exit(Exit {})),
             Some(unknown_type) => {
                 println!("[!] Unknown packet type: {}", unknown_type);
-                None
+                Err(ParsePacketTypeError)
             }
-            None => None,
+            None => Err(ParsePacketTypeError),
         }
     }
 }
