@@ -6,6 +6,7 @@ use std::{
     },
 };
 
+use mysql::{prelude::*, *};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, WriteHalf},
     net::{TcpListener, TcpStream},
@@ -13,6 +14,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+use crate::crypto::hash;
 use crate::packet::*;
 
 pub mod session;
@@ -114,11 +116,7 @@ async fn response_handler(
 }
 
 // Handler for each connection
-async fn session_task(
-    stream: TcpStream,
-    channels: Arc<AsyncMutex<session::Channels>>,
-    sqlconn: Arc<Mutex<rusqlite::Connection>>,
-) {
+async fn session_task(stream: TcpStream, channels: Arc<AsyncMutex<session::Channels>>, pool: Pool) {
     // Split into two unidirectional stream
     let (mut rd, wr) = tokio::io::split(stream);
 
@@ -170,7 +168,7 @@ async fn session_task(
             // Received a request to create a new account
             Ok(PacketType::RegisterReq(req)) => {
                 let res = RegisterRes {
-                    result: req.user.insert(Arc::clone(&sqlconn)),
+                    result: req.user.insert(pool.clone()),
                 };
                 _ = res_tx.send(PacketType::RegisterRes(res)).await;
             }
@@ -185,11 +183,7 @@ async fn session_task(
                         if req.login_info.guest {
                             channel.connect_guest()
                         } else {
-                            channel.connect_user(
-                                &req,
-                                id.lock().unwrap().as_str(),
-                                Arc::clone(&sqlconn),
-                            )
+                            channel.connect_user(&req, id.lock().unwrap().as_str(), pool.clone())
                         }
                     },
                 };
@@ -305,6 +299,33 @@ async fn session_task(
     }
 }
 
+// setup default schema for database, it doesn't panic even if those setups failed.
+pub async fn default_db_setup(pool: Pool) {
+    let mut conn = pool.get_conn().unwrap();
+    _ = conn.query_drop(
+        r"CREATE TABLE user (
+            id          VARCHAR(14) PRIMARY KEY,
+            password    TEXT NOT NULL,
+            bio         TEXT,
+            location    TEXT
+        )",
+    );
+
+    let root_password = hash::sha256_password("alpine");
+    _ = conn.query_drop(format!(
+        r"INSERT INTO user (
+            id, password, bio, location
+        ) VALUES (
+            'root',
+            '{}',
+            'root account',
+            ''
+        )
+        ",
+        root_password
+    ));
+}
+
 pub async fn run_server(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("[RsChat Sever] Bining on port {}...", port);
     let listener = match TcpListener::bind(format!("0.0.0.0:{}", port)).await {
@@ -315,44 +336,13 @@ pub async fn run_server(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Chatting channel list
     let channels = Arc::new(AsyncMutex::new(session::Channels::with_system_channels()));
 
-    // In-memory sqlite instance
-    let sqlconn = Arc::new(Mutex::new(rusqlite::Connection::open_in_memory()?));
-
-    // Create essential tables / columns
-    sqlconn
-        .lock()
-        .map(|lock| {
-            lock.execute_batch(
-                "BEGIN;
-                CREATE TABLE user (
-                    id          TEXT PRIMARY KEY,
-                    password    TEXT NOT NULL,
-                    bio         TEXT,
-                    location    TEXT
-                );
-                INSERT INTO user (
-                    id, password, bio, location
-                ) VALUES (
-                    'root',
-                    'alpine',
-                    'root account',
-                    ''
-                );
-                COMMIT;
-            ",
-            )
-            .expect("failed to create an essential table")
-        })
-        .expect("somehow failed to lock sqlconn");
+    let pool = Pool::new("mysql://root@localhost:3306/rschat").unwrap();
+    default_db_setup(pool.clone()).await;
 
     // We're good to go
     while let Ok(s) = listener.accept().await {
         println!("New connection from: {:?}", s.0);
-        tokio::spawn(session_task(
-            s.0,
-            Arc::clone(&channels),
-            Arc::clone(&sqlconn),
-        ));
+        tokio::spawn(session_task(s.0, Arc::clone(&channels), pool.clone()));
     }
     Ok(())
 }

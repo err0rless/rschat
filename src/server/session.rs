@@ -1,8 +1,6 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
-};
+use std::collections::{HashMap, HashSet};
 
+use mysql::*;
 use rand::prelude::*;
 use tokio::sync::broadcast;
 
@@ -88,7 +86,7 @@ impl Channel {
         &mut self,
         req: &LoginReq,
         cur_id: &str,
-        sqlconn: Arc<Mutex<rusqlite::Connection>>,
+        pool: Pool,
     ) -> Result<String, String> {
         // Account Login
         if self.num_user() >= NUM_MAX_USER {
@@ -100,7 +98,7 @@ impl Channel {
             return Err("broken login packet".to_owned());
         }
 
-        let res = req.login_info.login(sqlconn.clone());
+        let res = req.login_info.login(pool.clone());
         if res.is_ok() {
             self.leave_user(cur_id);
             self.add_connection(req.login_info.id.as_ref().unwrap().as_str());

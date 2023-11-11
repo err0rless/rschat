@@ -1,8 +1,6 @@
-use std::{
-    io::Write,
-    sync::{Arc, Mutex},
-};
+use std::io::Write;
 
+use mysql::{prelude::*, *};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncBufReadExt;
 
@@ -59,23 +57,22 @@ impl User {
     }
 
     // check if self is valid
-    pub fn insert(&self, sql: Arc<Mutex<rusqlite::Connection>>) -> Result<(), String> {
+    pub fn insert(&self, pool: Pool) -> Result<(), String> {
         if self.id.starts_with("guest_") || self.id.starts_with("root") {
             return Err("Reserved id format".to_owned());
         } else if self.password.len() < 4 {
             return Err("too short password! (password >= 4)".to_owned());
         }
 
-        let conn = sql.lock();
-        match conn.unwrap().execute(
-            "INSERT INTO user (id, password, bio, location)
-                VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![
-                &self.id,
-                &self.password,
-                &self.bio.as_ref().unwrap_or(&"NULL".to_owned()),
-                &self.location.as_ref().unwrap_or(&"NULL".to_owned()),
-            ],
+        let mut conn = pool.get_conn().unwrap();
+        match conn.exec_drop(
+            "INSERT INTO user (id, password, bio, location) VALUES (:id, :password, :bio, :location)",
+            params! {
+                "id" => &self.id,
+                "password" => &self.password,
+                "bio" => &self.bio.as_ref().unwrap_or(&"NULL".to_owned()),
+                "location" => &self.location.as_ref().unwrap_or(&"NULL".to_owned()),
+            },
         ) {
             Ok(_) => Ok(()),
             Err(e) => Err(format!("Failed to insert a new user: {}", e)),
@@ -121,18 +118,18 @@ impl Login {
         }
     }
 
-    pub fn login(&self, sql: Arc<Mutex<rusqlite::Connection>>) -> Result<String, String> {
-        if let Ok(conn) = sql.lock() {
-            match conn.query_row(
-                "SELECT id FROM user WHERE id=?1 AND password=?2",
-                [&self.id, &self.password],
-                |row| row.get::<_, String>(0),
-            ) {
-                Ok(r) => Ok(r),
-                Err(e) => Err(e.to_string()),
+    pub fn login(&self, pool: Pool) -> Result<String, String> {
+        if let Ok(mut conn) = pool.get_conn() {
+            match conn.query_first::<String, _>(format!(
+                "SELECT id FROM user WHERE id='{}' AND password='{}'",
+                self.id.as_ref().unwrap(),
+                self.password.as_ref().unwrap(),
+            )) {
+                Ok(Some(s)) => Ok(s),
+                _ => Err("Wrong ID or Password".to_owned()),
             }
         } else {
-            Err("Failed to lock sql connection".to_owned())
+            Err("Failed to get sql connection".to_owned())
         }
     }
 }
