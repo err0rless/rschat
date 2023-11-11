@@ -336,7 +336,8 @@ pub async fn run_server(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Chatting channel list
     let channels = Arc::new(AsyncMutex::new(session::Channels::with_system_channels()));
 
-    let pool = Pool::new("mysql://root@localhost:3306/rschat").unwrap();
+    let pool =
+        Pool::new("mysql://root@localhost:3306/rschat").expect("Make sure MySQL server is running");
     default_db_setup(pool.clone()).await;
 
     // We're good to go
