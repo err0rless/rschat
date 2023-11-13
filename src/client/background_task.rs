@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf},
     net::TcpStream,
@@ -5,6 +7,8 @@ use tokio::{
 };
 
 use crate::{client::util, packet::*};
+
+use super::input_controller::MessageChannel;
 
 /// receive formatted packets from `rd` and enqueue them to `incoming_tx` channel
 pub async fn produce_incomings(
@@ -31,17 +35,25 @@ pub async fn produce_incomings(
 }
 
 /// handle message packets
-pub async fn print_message_packets(mut incoming_rx: broadcast::Receiver<String>) {
+pub async fn print_message_packets(
+    mut incoming_rx: broadcast::Receiver<String>,
+    out_queue: MessageChannel,
+) {
     loop {
         let msg_str = match incoming_rx.recv().await {
             Ok(s) => s,
             Err(_) => continue,
         };
 
-        match serde_json::from_str::<Message>(msg_str.as_str()) {
-            Ok(msg) if msg.is_system => println!("[#System] {}", msg.msg),
-            Ok(msg) => println!("{}{}: {}", util::get_mark(&msg.id), msg.id, msg.msg),
-            _ => (),
+        if let Ok(msg) = serde_json::from_str::<Message>(msg_str.as_str()) {
+            out_queue.push(
+                if msg.is_system {
+                    "#System".to_owned()
+                } else {
+                    msg.id
+                },
+                msg.msg,
+            );
         }
     }
 }
