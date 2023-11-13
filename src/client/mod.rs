@@ -5,10 +5,10 @@ use tokio::{
 
 use crate::{db, packet::*};
 
+pub mod app;
 pub mod background_task;
 pub mod command;
 pub mod input_controller;
-pub mod input_handler;
 pub mod session;
 pub mod tui;
 pub mod util;
@@ -54,7 +54,7 @@ pub async fn run_client(port: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     let state = session::State::new_guest(id.as_str());
 
-    let app = tui::App::new(outgoing_tx.clone(), incoming_tx.clone(), state);
+    let app = app::App::new(outgoing_tx.clone(), incoming_tx.clone(), state);
     tui::set_tui(app).await?;
     Ok(())
 }

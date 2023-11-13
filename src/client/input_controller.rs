@@ -55,18 +55,25 @@ impl MessageChannel {
 }
 
 pub struct InputController {
+    /// Current input content
     pub input: String,
-    pub cursor_position: usize,
-    pub input_mode: InputMode,
+
+    /// Messages that have been submitted
     pub messages: MessageChannel,
+
+    /// current cursor position
+    pub cursor_position: usize,
+
+    /// current input mode (Normal, Editing)
+    pub input_mode: InputMode,
 }
 
 impl Default for InputController {
     fn default() -> Self {
         Self {
             input: String::new(),
-            input_mode: InputMode::Normal,
             messages: MessageChannel::default(),
+            input_mode: InputMode::Normal,
             cursor_position: 0,
         }
     }

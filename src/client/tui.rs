@@ -6,46 +6,8 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{prelude::*, widgets::*};
-use tokio::sync::{broadcast, mpsc};
 
-use crate::client::{background_task, input_controller::*, session};
-use crate::packet::*;
-
-use super::input_handler;
-
-/// App holds the state of the application
-pub struct App {
-    input_controller: InputController,
-    outgoing_tx: mpsc::Sender<String>,
-    incoming_tx: broadcast::Sender<String>,
-    state: session::State,
-}
-
-impl App {
-    pub fn new(
-        outgoing_tx: mpsc::Sender<String>,
-        incoming_tx: broadcast::Sender<String>,
-        state: session::State,
-    ) -> Self {
-        Self {
-            input_controller: InputController::default(),
-            outgoing_tx,
-            incoming_tx,
-            state,
-        }
-    }
-
-    // Send message to the outgoing channel
-    pub async fn send_message(&self) {
-        let msg_bytes = Message {
-            id: self.state.id.clone(),
-            msg: self.input_controller.input.clone(),
-            is_system: false,
-        }
-        .as_json_string();
-        _ = self.outgoing_tx.send(msg_bytes).await;
-    }
-}
+use super::{app::App, background_task, input_controller::*};
 
 pub async fn set_tui(app: App) -> Result<(), Box<dyn Error>> {
     // setup terminal
@@ -115,14 +77,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                     KeyCode::Enter => {
                         if app.input_controller.input.starts_with('/') {
                             // handle command
-                            _ = input_handler::handle_command(
-                                &app.outgoing_tx.clone(),
-                                app.incoming_tx.subscribe(),
-                                &app.input_controller.input.clone(),
-                                app.input_controller.messages.clone(),
-                                &mut app.state,
-                            )
-                            .await;
+                            _ = app.handle_command().await;
                             app.input_controller.clear_input_box();
                         } else {
                             app.send_message().await;
