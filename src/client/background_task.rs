@@ -4,9 +4,8 @@ use tokio::{
     sync::{broadcast, mpsc},
 };
 
+use super::message_channel::MessageChannel;
 use crate::packet::*;
-
-use super::input_controller::MessageChannel;
 
 /// receive formatted packets from `rd` and enqueue them to `incoming_tx` channel
 pub async fn produce_incomings(
@@ -16,14 +15,14 @@ pub async fn produce_incomings(
     loop {
         // Size header
         let size_msg = match rd.read_u32().await {
-            Ok(0) | Err(_) => panic!("[#System] EOF"),
+            Ok(0) | Err(_) => panic!("[System] EOF"),
             Ok(size) => size,
         };
 
         // Message body
         let mut buf = vec![0; size_msg as usize];
         let n = match rd.read_exact(buf.as_mut_slice()).await {
-            Ok(0) | Err(_) => panic!("[#System] EOF"),
+            Ok(0) | Err(_) => panic!("[System] EOF"),
             Ok(size) => size,
         };
 
@@ -38,9 +37,8 @@ pub async fn print_message_packets(
     out_queue: MessageChannel,
 ) {
     loop {
-        let msg_str = match incoming_rx.recv().await {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Ok(msg_str) = incoming_rx.recv().await else {
+            continue;
         };
 
         if let Ok(msg) = serde_json::from_str::<Message>(msg_str.as_str()) {

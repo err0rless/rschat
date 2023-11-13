@@ -31,7 +31,7 @@ pub async fn set_tui(app: App) -> Result<(), Box<dyn Error>> {
     // Task for receiving broadcast messages from server
     tokio::task::spawn(background_task::print_message_packets(
         app.incoming_tx.subscribe(),
-        app.input_controller.messages.clone(),
+        app.messages.clone(),
     ));
 
     // create app and run it
@@ -55,7 +55,7 @@ fn reset_terminal() -> Result<(), Box<dyn Error>> {
 }
 
 async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
-    app.input_controller
+    app.messages
         .push_sys_msg(format!("Welcome {}!", &app.state.id));
     loop {
         terminal.draw(|f| construct_ui(f, &app))?;
@@ -86,7 +86,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             app.input_controller.clear_input_box();
                         } else {
                             app.send_message().await;
-                            app.input_controller.push_msg(app.state.id.clone());
+                            app.messages
+                                .push(app.state.id.clone(), app.input_controller.input.clone());
+                            app.input_controller.clear_input_box();
                         }
                     }
                     KeyCode::Char(ch) => app.input_controller.enter_char(ch),
@@ -102,16 +104,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
     }
 }
 
-pub fn construct_ui(f: &mut Frame, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Min(1),
-            Constraint::Length(3),
-        ])
-        .split(f.size());
-
+pub fn render_help_messages(f: &mut Frame, app: &App, chunk: Rect) {
+    // Helper messages
     let (msg, style) = match app.input_controller.input_mode {
         InputMode::Normal => (
             vec![
@@ -134,10 +128,30 @@ pub fn construct_ui(f: &mut Frame, app: &App) {
             Style::default(),
         ),
     };
-    let mut text = Text::from(Line::from(msg));
-    text.patch_style(style);
-    let help_message = Paragraph::new(text);
-    f.render_widget(help_message, chunks[0]);
+
+    f.render_widget(
+        Paragraph::new({
+            let mut text = Text::from(Line::from(msg));
+            text.patch_style(style);
+            text
+        }),
+        chunk,
+    );
+}
+
+pub fn construct_ui(f: &mut Frame, app: &App) {
+    // Layout chunks
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(3),
+        ])
+        .split(f.size());
+
+    // input messages
+    render_help_messages(f, app, chunks[0]);
 
     let input = Paragraph::new(app.input_controller.input.as_str())
         .style(match app.input_controller.input_mode {
@@ -150,15 +164,16 @@ pub fn construct_ui(f: &mut Frame, app: &App) {
                 .title(app.state.id.clone()),
         );
     f.render_widget(input, chunks[2]);
-    match app.input_controller.input_mode {
-        InputMode::Normal => {}
-        InputMode::Editing => f.set_cursor(
-            chunks[2].x + app.input_controller.cursor_position as u16 + 1,
+
+    // Set cursor position if current input mode is Editing
+    if app.input_controller.input_mode == InputMode::Editing {
+        f.set_cursor(
+            chunks[2].x + app.input_controller.cursor_pos as u16 + 1,
             chunks[2].y + 1,
-        ),
+        );
     }
 
-    let messages = app.input_controller.messages.collect_list_item();
+    let messages = app.messages.collect_list_item();
     let messages = List::new(messages).block(
         Block::default()
             .borders(Borders::ALL)

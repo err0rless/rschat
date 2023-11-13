@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use tokio::sync::{broadcast, mpsc};
 
+use super::message_channel::MessageChannel;
 use crate::{
     client::{command::*, input_controller::*, session, util},
     db,
@@ -20,6 +21,7 @@ pub enum HandleCommandStatus {
 /// App holds the state of the application
 pub struct App {
     pub input_controller: InputController,
+    pub messages: MessageChannel,
     pub outgoing_tx: mpsc::Sender<String>,
     pub incoming_tx: broadcast::Sender<String>,
     pub state: session::State,
@@ -33,13 +35,14 @@ impl App {
     ) -> Self {
         Self {
             input_controller: InputController::default(),
+            messages: MessageChannel::default(),
             outgoing_tx,
             incoming_tx,
             state,
         }
     }
 
-    // Send message to the outgoing channel
+    /// Send message to the outgoing channel
     pub async fn send_message(&self) {
         let msg_bytes = Message {
             id: self.state.id.clone(),
@@ -55,29 +58,28 @@ impl App {
             Ok(Command::Help) => Command::help(),
             Ok(Command::Get(item)) => match &item[..] {
                 "info" | "name" => {
-                    self.input_controller
+                    self.messages
                         .push_sys_msg(format!("Your ID: '{}'", self.state.id));
                 }
                 _ => {
-                    self.input_controller
-                        .push_sys_err(format!("Unknown item: '{}'", item));
+                    self.messages
+                        .push_sys_err(format!("Unknown item for 'get' command: '{}'", item));
                 }
             },
             Ok(Command::Register) => {
                 let Some(user) = db::user::User::from_stdin().await else {
-                    self.input_controller
-                        .push_sys_err("failed to register".to_owned());
+                    self.messages.push_sys_err("failed to register".to_owned());
                     return HandleCommandStatus::Continue;
                 };
 
                 let register_req = RegisterReq { user }.as_json_string();
                 if let Err(e) = self.outgoing_tx.send(register_req).await {
-                    self.input_controller
+                    self.messages
                         .push_sys_err(format!("Channel send failed, retry later: {}", e));
                 }
 
                 // block til Register response
-                self.input_controller.push_sys_msg(
+                self.messages.push_sys_msg(
                     match util::consume_til::<RegisterRes>(self.incoming_tx.subscribe())
                         .await
                         .result
@@ -89,13 +91,13 @@ impl App {
             }
             Ok(Command::Login(login_id)) => {
                 if !self.state.is_guest {
-                    self.input_controller
+                    self.messages
                         .push_sys_err("You are already logged in".to_owned());
                     return HandleCommandStatus::Continue;
                 }
 
                 let Some(login_info) = db::user::Login::from_stdin(login_id).await else {
-                    self.input_controller
+                    self.messages
                         .push_sys_err("`id` or `password` is empty".to_owned());
                     return HandleCommandStatus::Continue;
                 };
@@ -107,7 +109,7 @@ impl App {
                     .send(LoginReq { login_info }.as_json_string())
                     .await
                 {
-                    self.input_controller
+                    self.messages
                         .push_sys_err(format!("Channel send failed, try again: '{}'", e));
                     return HandleCommandStatus::Continue;
                 }
@@ -121,18 +123,16 @@ impl App {
                         // Succeded to login, you are no longer a guest
                         self.state.id = id_clone;
                         self.state.is_guest = false;
-                        self.input_controller.push_sys_msg("Success!".to_owned());
+                        self.messages.push_sys_msg("Success!".to_owned());
                     }
-                    Err(s) => self
-                        .input_controller
-                        .push_sys_err(format!("Failure: '{}'", s)),
+                    Err(s) => self.messages.push_sys_err(format!("Failure: '{}'", s)),
                 };
             }
             Ok(Command::Fetch(fetch)) => {
                 let item_str = match fetch {
                     Fetch::UserList => "list",
                     _ => {
-                        self.input_controller
+                        self.messages
                             .push_sys_err("Unhandled fetch item".to_owned());
                         return HandleCommandStatus::Continue;
                     }
@@ -148,7 +148,7 @@ impl App {
                     )
                     .await
                 {
-                    self.input_controller
+                    self.messages
                         .push_sys_err(format!("Channel send failed, try again: '{}'", e));
                     return HandleCommandStatus::Continue;
                 }
@@ -158,12 +158,12 @@ impl App {
                 match fetch_res.item.as_str() {
                     "list" => match fetch_res.result {
                         Ok(v) => self
-                            .input_controller
+                            .messages
                             .push_sys_msg(serde_json::to_string_pretty(&v).unwrap()),
-                        Err(e) => self.input_controller.push_sys_err(e),
+                        Err(e) => self.messages.push_sys_err(e),
                     },
                     unknown => self
-                        .input_controller
+                        .messages
                         .push_sys_err(format!("unknown item: '{}'", unknown)),
                 };
             }
@@ -178,26 +178,28 @@ impl App {
                 {
                     Ok(name) => {
                         // goto succeeded, change channel
-                        self.state.channel = name.clone();
-                        self.input_controller
-                            .push_sys_msg(format!("succeeded to join channel: '{}'", name));
+                        self.messages.push_sys_msg(format!(
+                            "You've succesfully switched to the channel: '{}'",
+                            &name
+                        ));
+                        self.state.channel = name;
                     }
                     Err(e) => self
-                        .input_controller
+                        .messages
                         .push_sys_err(format!("failed to join channel: '{}'", e)),
                 }
             }
             Ok(Command::Exit) => {
-                self.input_controller
+                self.messages
                     .push_sys_msg(" >> See You Soon << ".to_owned());
                 _ = self.outgoing_tx.send(Exit {}.as_json_string()).await;
                 return HandleCommandStatus::Exit;
             }
             // Not a command
             Err(ParseCommandError::UnknownCommand(cmd)) => self
-                .input_controller
+                .messages
                 .push_sys_err(format!("Unknown command: {}", cmd)),
-            Err(e) => self.input_controller.push_sys_err(format!("{:?}", e)),
+            Err(e) => self.messages.push_sys_err(format!("{:?}", e)),
         }
         HandleCommandStatus::Continue
     }
