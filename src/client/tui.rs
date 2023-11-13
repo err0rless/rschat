@@ -89,6 +89,9 @@ fn reset_terminal() -> Result<(), Box<dyn Error>> {
 }
 
 async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
+    app.input_controller
+        .messages
+        .push("System".to_owned(), format!("Welcome {}!", &app.state.id));
     loop {
         terminal.draw(|f| construct_ui(f, &app))?;
 
@@ -196,7 +199,10 @@ pub fn construct_ui(f: &mut Frame, app: &App) {
     }
 
     let messages = app.input_controller.messages.collect_list_item();
-    let messages =
-        List::new(messages).block(Block::default().borders(Borders::ALL).title("Messages"));
+    let messages = List::new(messages).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(format!("[Channel: {}]", app.state.channel.clone())),
+    );
     f.render_widget(messages, chunks[1]);
 }

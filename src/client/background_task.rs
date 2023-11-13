@@ -1,12 +1,10 @@
-use std::sync::{Arc, Mutex};
-
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf},
     net::TcpStream,
     sync::{broadcast, mpsc},
 };
 
-use crate::{client::util, packet::*};
+use crate::packet::*;
 
 use super::input_controller::MessageChannel;
 
