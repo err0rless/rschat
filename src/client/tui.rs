@@ -7,7 +7,11 @@ use crossterm::{
 };
 use ratatui::{prelude::*, widgets::*};
 
-use super::{app::App, background_task, input_controller::*};
+use super::{
+    app::{App, HandleCommandStatus},
+    background_task,
+    input_controller::*,
+};
 
 pub async fn set_tui(app: App) -> Result<(), Box<dyn Error>> {
     // setup terminal
@@ -52,8 +56,7 @@ fn reset_terminal() -> Result<(), Box<dyn Error>> {
 
 async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     app.input_controller
-        .messages
-        .push("System".to_owned(), format!("Welcome {}!", &app.state.id));
+        .push_sys_msg(format!("Welcome {}!", &app.state.id));
     loop {
         terminal.draw(|f| construct_ui(f, &app))?;
 
@@ -77,11 +80,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                     KeyCode::Enter => {
                         if app.input_controller.input.starts_with('/') {
                             // handle command
-                            _ = app.handle_command().await;
+                            if app.handle_command().await == HandleCommandStatus::Exit {
+                                return Ok(());
+                            }
                             app.input_controller.clear_input_box();
                         } else {
                             app.send_message().await;
-                            app.input_controller.submit_message(app.state.id.as_str());
+                            app.input_controller.push_msg(app.state.id.clone());
                         }
                     }
                     KeyCode::Char(ch) => app.input_controller.enter_char(ch),

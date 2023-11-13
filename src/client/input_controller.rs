@@ -126,7 +126,15 @@ impl InputController {
         self.reset_cursor();
     }
 
-    pub fn submit_message(&mut self, id: &str) {
+    pub fn push_sys_msg(&mut self, msg: String) {
+        self.messages.push("System".to_owned(), msg);
+    }
+
+    pub fn push_sys_err(&mut self, msg: String) {
+        self.messages.push("SystemError".to_owned(), msg);
+    }
+
+    pub fn push_msg(&mut self, id: String) {
         self.messages.push(id.to_owned(), self.input.clone());
         self.clear_input_box();
     }

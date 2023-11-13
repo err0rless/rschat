@@ -46,7 +46,7 @@ pub async fn print_message_packets(
         if let Ok(msg) = serde_json::from_str::<Message>(msg_str.as_str()) {
             out_queue.push(
                 if msg.is_system {
-                    "#System".to_owned()
+                    "System".to_owned()
                 } else {
                     msg.id
                 },
