@@ -73,7 +73,7 @@ impl Default for InputController {
         Self {
             input: String::new(),
             messages: MessageChannel::default(),
-            input_mode: InputMode::Normal,
+            input_mode: InputMode::Editing,
             cursor_position: 0,
         }
     }
