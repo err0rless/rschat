@@ -16,3 +16,7 @@ mysql = "24.0.0"
 base64ct = { version = "1.6.0", features = ["alloc"] }
 sha2 = "0.10"
 rand = "0.8.5"
+
+# TUI
+ratatui = "0.24.0"
+crossterm = "0.27.0"

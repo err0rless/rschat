@@ -1,11 +1,3 @@
-pub fn get_mark(id: &str) -> char {
-    match id {
-        s if s.starts_with("guest_") => '%',
-        s if s.starts_with("root") => '#',
-        _ => '@',
-    }
-}
-
 /// Consumes broadcast channel until encounter the packet type `P`
 pub async fn consume_til<P>(mut incoming_rx: tokio::sync::broadcast::Receiver<String>) -> P
 where

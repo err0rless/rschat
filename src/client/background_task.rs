@@ -4,7 +4,8 @@ use tokio::{
     sync::{broadcast, mpsc},
 };
 
-use crate::{client::util, packet::*};
+use super::message_channel::MessageChannel;
+use crate::packet::*;
 
 /// receive formatted packets from `rd` and enqueue them to `incoming_tx` channel
 pub async fn produce_incomings(
@@ -14,14 +15,14 @@ pub async fn produce_incomings(
     loop {
         // Size header
         let size_msg = match rd.read_u32().await {
-            Ok(0) | Err(_) => panic!("[#System] EOF"),
+            Ok(0) | Err(_) => panic!("[System] EOF"),
             Ok(size) => size,
         };
 
         // Message body
         let mut buf = vec![0; size_msg as usize];
         let n = match rd.read_exact(buf.as_mut_slice()).await {
-            Ok(0) | Err(_) => panic!("[#System] EOF"),
+            Ok(0) | Err(_) => panic!("[System] EOF"),
             Ok(size) => size,
         };
 
@@ -31,17 +32,24 @@ pub async fn produce_incomings(
 }
 
 /// handle message packets
-pub async fn print_message_packets(mut incoming_rx: broadcast::Receiver<String>) {
+pub async fn print_message_packets(
+    mut incoming_rx: broadcast::Receiver<String>,
+    out_queue: MessageChannel,
+) {
     loop {
-        let msg_str = match incoming_rx.recv().await {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Ok(msg_str) = incoming_rx.recv().await else {
+            continue;
         };
 
-        match serde_json::from_str::<Message>(msg_str.as_str()) {
-            Ok(msg) if msg.is_system => println!("[#System] {}", msg.msg),
-            Ok(msg) => println!("{}{}: {}", util::get_mark(&msg.id), msg.id, msg.msg),
-            _ => (),
+        if let Ok(msg) = serde_json::from_str::<Message>(msg_str.as_str()) {
+            out_queue.push(
+                if msg.is_system {
+                    "System".to_owned()
+                } else {
+                    msg.id
+                },
+                msg.msg,
+            );
         }
     }
 }

@@ -10,21 +10,25 @@ pub enum Command {
     Help,
     Get(String),
     Register,
-    Login(Option<String>),
+    Login(),
     Fetch(Fetch),
     Goto(String),
     Exit,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct ParseCommandError;
+pub enum ParseCommandError {
+    NotCommand,
+    InvalidArgument(String),
+    UnknownCommand(String),
+}
 
 impl FromStr for Command {
     type Err = ParseCommandError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if !s.starts_with('/') {
-            return Err(ParseCommandError);
+            return Err(ParseCommandError::NotCommand);
         }
 
         let cmdline = s.trim_end();
@@ -38,18 +42,15 @@ impl FromStr for Command {
             "exit" => Ok(Command::Exit),
             "help" | "h" => Ok(Command::Help),
             "register" | "reg" => Ok(Command::Register),
-            "login" => Ok(Command::Login(
-                cmdline
-                    .find(' ')
-                    .map(|idx| String::from(cmdline[idx + 1..].trim())),
-            )),
+            "login" => Ok(Command::Login()),
             "get" => {
                 if let Some(idx) = cmdline.find(' ') {
                     let item = String::from(cmdline[idx + 1..].trim());
                     Ok(Command::Get(item))
                 } else {
-                    println!("[#SystemError] Command 'get' requires an argument: '[key]'");
-                    Err(ParseCommandError)
+                    Err(ParseCommandError::InvalidArgument(
+                        "Command 'get' requires an argument: '[key]'".to_owned(),
+                    ))
                 }
             }
             "fetch" => Ok(Command::Fetch(
@@ -60,15 +61,11 @@ impl FromStr for Command {
             )),
             "goto" => match cmdline.find(' ') {
                 Some(idx) => Ok(Command::Goto(String::from(cmdline[idx + 1..].trim()))),
-                None => {
-                    println!("[#SystemError] Command 'goto' requires an argument: [channel_name]");
-                    Err(ParseCommandError)
-                }
+                None => Err(ParseCommandError::InvalidArgument(
+                    "[#SystemError] Command 'goto' requires an argument: [channel_name]".to_owned(),
+                )),
             },
-            cmd => {
-                println!("Unknown command: '{}'", cmd);
-                Err(ParseCommandError)
-            }
+            unknown => Err(ParseCommandError::UnknownCommand(unknown.to_owned())),
         }
     }
 }
