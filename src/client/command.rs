@@ -10,7 +10,7 @@ pub enum Command {
     Help,
     Get(String),
     Register,
-    Login(Option<String>),
+    Login(),
     Fetch(Fetch),
     Goto(String),
     Exit,
@@ -42,11 +42,7 @@ impl FromStr for Command {
             "exit" => Ok(Command::Exit),
             "help" | "h" => Ok(Command::Help),
             "register" | "reg" => Ok(Command::Register),
-            "login" => Ok(Command::Login(
-                cmdline
-                    .find(' ')
-                    .map(|idx| String::from(cmdline[idx + 1..].trim())),
-            )),
+            "login" => Ok(Command::Login()),
             "get" => {
                 if let Some(idx) = cmdline.find(' ') {
                     let item = String::from(cmdline[idx + 1..].trim());

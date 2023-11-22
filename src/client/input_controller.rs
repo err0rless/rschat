@@ -6,7 +6,7 @@ pub enum InputMode {
 
 pub struct InputController {
     /// Current input content
-    pub input: String,
+    pub buf: String,
 
     /// current position of the cursor
     pub cursor_pos: usize,
@@ -18,16 +18,30 @@ pub struct InputController {
 impl Default for InputController {
     fn default() -> Self {
         Self {
-            input: String::new(),
-            input_mode: InputMode::Editing,
+            buf: String::new(),
             cursor_pos: 0,
+            input_mode: InputMode::Editing,
         }
     }
 }
 
 impl InputController {
+    pub fn is_editing_mode(&self) -> bool {
+        self.input_mode == InputMode::Editing
+    }
+
+    /// Switch to normal mode
+    pub fn normal_mode(&mut self) {
+        self.input_mode = InputMode::Normal;
+    }
+
+    /// Switch to editing mod
+    pub fn editing_mode(&mut self) {
+        self.input_mode = InputMode::Editing;
+    }
+
     pub fn clamp_cursor(&self, new_cursor_pos: usize) -> usize {
-        new_cursor_pos.clamp(0, self.input.len())
+        new_cursor_pos.clamp(0, self.buf.len())
     }
 
     pub fn move_cursor_left(&mut self) {
@@ -41,15 +55,13 @@ impl InputController {
     }
 
     pub fn enter_char(&mut self, ch: char) {
-        self.input.insert(self.cursor_pos, ch);
+        self.buf.insert(self.cursor_pos, ch);
         self.move_cursor_right();
     }
 
     pub fn delete_char(&mut self) {
-        if self.cursor_pos > 0 {
-            self.input.remove(self.cursor_pos - 1);
-            self.move_cursor_left();
-        }
+        self.buf.pop();
+        self.move_cursor_left();
     }
 
     pub fn reset_cursor_pos(&mut self) {
@@ -57,7 +69,7 @@ impl InputController {
     }
 
     pub fn clear_input_box(&mut self) {
-        self.input.clear();
+        self.buf.clear();
         self.reset_cursor_pos();
     }
 }

@@ -2,12 +2,14 @@ use std::str::FromStr;
 
 use tokio::sync::{broadcast, mpsc};
 
-use super::message_channel::MessageChannel;
-use crate::{
-    client::{command::*, input_controller::*, session, util},
-    db,
-    packet::*,
+use super::{
+    command::*,
+    input_controller::*,
+    message_channel::MessageChannel,
+    popup::{self, login::LoginPopupManager, register::RegisterPopupManager},
+    session, util,
 };
+use crate::{crypto::hash, db, packet::*};
 
 #[derive(PartialEq)]
 pub enum HandleCommandStatus {
@@ -18,13 +20,19 @@ pub enum HandleCommandStatus {
     Continue,
 }
 
+pub enum CommandAction {
+    Login,
+    Register,
+}
+
 /// App holds the state of the application
 pub struct App {
-    pub input_controller: InputController,
+    pub main_input: InputController,
     pub messages: MessageChannel,
     pub outgoing_tx: mpsc::Sender<String>,
     pub incoming_tx: broadcast::Sender<String>,
     pub state: session::State,
+    pub popup: Option<Box<dyn popup::PopupManager>>,
 }
 
 impl App {
@@ -34,11 +42,12 @@ impl App {
         state: session::State,
     ) -> Self {
         Self {
-            input_controller: InputController::default(),
+            main_input: InputController::default(),
             messages: MessageChannel::default(),
             outgoing_tx,
             incoming_tx,
             state,
+            popup: None,
         }
     }
 
@@ -46,87 +55,130 @@ impl App {
     pub async fn send_message(&self) {
         let msg_bytes = Message {
             id: self.state.id.clone(),
-            msg: self.input_controller.input.clone(),
+            msg: self.main_input.buf.clone(),
             is_system: false,
         }
         .as_json_string();
         _ = self.outgoing_tx.send(msg_bytes).await;
     }
 
+    pub async fn run_action(&mut self, action: &CommandAction, args: Option<serde_json::Value>) {
+        match action {
+            CommandAction::Login => {
+                let args = args.unwrap();
+                let id = args["id"].as_str().unwrap();
+                let password = args["password"].as_str().unwrap();
+                self.login(id, password).await;
+            }
+            CommandAction::Register => {
+                let args = args.unwrap();
+                self.register(
+                    args["id"].as_str().unwrap(),
+                    args["password"].as_str().unwrap(),
+                    args["bio"].as_str(),
+                    args["location"].as_str(),
+                )
+                .await;
+            }
+        };
+    }
+
+    pub async fn login(&mut self, id: &str, password: &str) {
+        if !self.state.is_guest {
+            self.messages
+                .push_sys_err("You are already logged in".to_owned());
+            return;
+        }
+
+        let login_info = db::user::Login {
+            guest: false,
+            id: Some(id.to_owned()),
+            password: Some(hash::sha256_password(password)),
+        };
+
+        // id backup
+        let id_clone = login_info.id.clone().unwrap();
+        if let Err(e) = self
+            .outgoing_tx
+            .send(LoginReq { login_info }.as_json_string())
+            .await
+        {
+            self.messages
+                .push_sys_err(format!("Channel send failed, try again: '{}'", e));
+            return;
+        }
+
+        // block til Login response
+        match util::consume_til::<LoginRes>(self.incoming_tx.subscribe())
+            .await
+            .result
+        {
+            Ok(_) => {
+                // Succeded to login, you are no longer a guest
+                self.state.id = id_clone;
+                self.state.is_guest = false;
+                self.messages.push_sys_msg("Success!".to_owned());
+            }
+            Err(s) => self.messages.push_sys_err(format!("Failure: '{}'", s)),
+        };
+    }
+
+    pub async fn register(
+        &mut self,
+        id: &str,
+        password: &str,
+        bio: Option<&str>,
+        location: Option<&str>,
+    ) {
+        if id.is_empty() || password.is_empty() {
+            self.messages
+                .push_sys_err("ID or Password is empty".to_owned());
+            return;
+        }
+
+        let user = db::user::User {
+            id: id.to_owned(),
+            password: hash::sha256_password(password),
+            bio: bio.map(String::from),
+            location: location.map(String::from),
+        };
+
+        let register_req = RegisterReq { user }.as_json_string();
+        if let Err(e) = self.outgoing_tx.send(register_req).await {
+            self.messages
+                .push_sys_err(format!("Channel send failed, retry later: {}", e));
+        }
+
+        // block til Register response
+        self.messages.push_sys_msg(
+            match util::consume_til::<RegisterRes>(self.incoming_tx.subscribe())
+                .await
+                .result
+            {
+                Ok(_) => "Success!".to_owned(),
+                Err(s) => format!("Failure: {}", s),
+            },
+        );
+    }
+
     pub async fn handle_command(&mut self) -> HandleCommandStatus {
-        match Command::from_str(&self.input_controller.input) {
+        match Command::from_str(&self.main_input.buf) {
             Ok(Command::Help) => Command::help(),
             Ok(Command::Get(item)) => match &item[..] {
-                "info" | "name" => {
-                    self.messages
-                        .push_sys_msg(format!("Your ID: '{}'", self.state.id));
-                }
-                _ => {
-                    self.messages
-                        .push_sys_err(format!("Unknown item for 'get' command: '{}'", item));
-                }
+                "info" | "name" => self
+                    .messages
+                    .push_sys_msg(format!("Your ID: '{}'", self.state.id)),
+                _ => self
+                    .messages
+                    .push_sys_err(format!("Unknown item for 'get' command: '{}'", item)),
             },
             Ok(Command::Register) => {
-                let Some(user) = db::user::User::from_stdin().await else {
-                    self.messages.push_sys_err("failed to register".to_owned());
-                    return HandleCommandStatus::Continue;
-                };
-
-                let register_req = RegisterReq { user }.as_json_string();
-                if let Err(e) = self.outgoing_tx.send(register_req).await {
-                    self.messages
-                        .push_sys_err(format!("Channel send failed, retry later: {}", e));
-                }
-
-                // block til Register response
-                self.messages.push_sys_msg(
-                    match util::consume_til::<RegisterRes>(self.incoming_tx.subscribe())
-                        .await
-                        .result
-                    {
-                        Ok(_) => "Success!".to_owned(),
-                        Err(s) => format!("Failure: {}", s),
-                    },
-                );
+                self.main_input.normal_mode();
+                self.popup = Some(Box::new(RegisterPopupManager::new()));
             }
-            Ok(Command::Login(login_id)) => {
-                if !self.state.is_guest {
-                    self.messages
-                        .push_sys_err("You are already logged in".to_owned());
-                    return HandleCommandStatus::Continue;
-                }
-
-                let Some(login_info) = db::user::Login::from_stdin(login_id).await else {
-                    self.messages
-                        .push_sys_err("`id` or `password` is empty".to_owned());
-                    return HandleCommandStatus::Continue;
-                };
-
-                // id backup
-                let id_clone = login_info.id.clone().unwrap();
-                if let Err(e) = self
-                    .outgoing_tx
-                    .send(LoginReq { login_info }.as_json_string())
-                    .await
-                {
-                    self.messages
-                        .push_sys_err(format!("Channel send failed, try again: '{}'", e));
-                    return HandleCommandStatus::Continue;
-                }
-
-                // block til Login response
-                match util::consume_til::<LoginRes>(self.incoming_tx.subscribe())
-                    .await
-                    .result
-                {
-                    Ok(_) => {
-                        // Succeded to login, you are no longer a guest
-                        self.state.id = id_clone;
-                        self.state.is_guest = false;
-                        self.messages.push_sys_msg("Success!".to_owned());
-                    }
-                    Err(s) => self.messages.push_sys_err(format!("Failure: '{}'", s)),
-                };
+            Ok(Command::Login()) => {
+                self.main_input.normal_mode();
+                self.popup = Some(Box::new(LoginPopupManager::new()));
             }
             Ok(Command::Fetch(fetch)) => {
                 let item_str = match fetch {
@@ -165,7 +217,7 @@ impl App {
                     unknown => self
                         .messages
                         .push_sys_err(format!("unknown item: '{}'", unknown)),
-                };
+                }
             }
             Ok(Command::Goto(channel_name)) => {
                 _ = self
@@ -190,8 +242,6 @@ impl App {
                 }
             }
             Ok(Command::Exit) => {
-                self.messages
-                    .push_sys_msg(" >> See You Soon << ".to_owned());
                 _ = self.outgoing_tx.send(Exit {}.as_json_string()).await;
                 return HandleCommandStatus::Exit;
             }

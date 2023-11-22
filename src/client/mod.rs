@@ -10,6 +10,7 @@ pub mod background_task;
 pub mod command;
 pub mod input_controller;
 pub mod message_channel;
+pub mod popup;
 pub mod session;
 pub mod tui;
 pub mod util;
