@@ -90,7 +90,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
         match app.main_input.input_mode {
             InputMode::Normal => {
-                if key.code == KeyCode::Char('e') {
+                if key.code == KeyCode::Char('i') {
                     app.main_input.editing_mode();
                 }
             }
@@ -129,7 +129,7 @@ pub fn render_help_messages(f: &mut Frame, app: &App, chunk: Rect) {
     // Helper messages
     let (msg, style) = match app.main_input.input_mode {
         InputMode::Normal => (
-            vec!["Press ".into(), "'e'".bold(), " to start editing.".into()],
+            vec!["Press ".into(), "'i'".bold(), " to start editing.".into()],
             Style::default().add_modifier(Modifier::RAPID_BLINK),
         ),
         InputMode::Editing => (
